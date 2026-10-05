@@ -32,6 +32,7 @@ core_src = files(
   'src/core/db.c',
   'src/core/vault.c',
   'src/core/journal.c',
+  'src/core/text.c',
 )
 core_deps = [glib_dep, sqlite_dep, sodium_dep]
 core_lib = static_library('journal-core', core_src, dependencies : core_deps)

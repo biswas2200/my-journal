@@ -29,9 +29,22 @@ void           jr_journal_set_kdf_cost       (JrJournal *j, JrKdfCost cost);
 gboolean       jr_journal_pin_enabled        (JrJournal *j);
 gboolean       jr_journal_is_unlocked        (JrJournal *j);
 
-/* Slow (Argon2id): call off the UI thread. */
+/* Unlock in one call. Slow (Argon2id, ~0.5 s). */
 JrUnlockResult jr_journal_unlock_pin         (JrJournal *j, const char *pin, gint64 now);
 JrUnlockResult jr_journal_unlock_recovery    (JrJournal *j, const char *recovery, gint64 now);
+/* The same in three steps so the slow part can run on a worker thread:
+ * begin and finish use the database (UI thread only); run touches nothing
+ * but the attempt. begin returns NULL during a lockout (JR_UNLOCK_WAIT). */
+typedef enum { JR_SECRET_PIN, JR_SECRET_RECOVERY } JrSecretKind;
+typedef struct JrUnlockAttempt JrUnlockAttempt;
+JrUnlockAttempt *jr_journal_begin_unlock     (JrJournal *j, JrSecretKind kind,
+                                              const char *secret, gint64 now);
+void           jr_unlock_attempt_run         (JrUnlockAttempt *a);
+/* Applies the result and frees the attempt. */
+JrUnlockResult jr_journal_finish_unlock      (JrJournal *j, JrUnlockAttempt *a);
+/* Drops an attempt without applying it (wipes the secret). */
+void           jr_unlock_attempt_free        (JrUnlockAttempt *a);
+
 gint64         jr_journal_lockout_remaining  (JrJournal *j, gint64 now);
 int            jr_journal_tries_left         (JrJournal *j);
 /* Zeroes the key. No-op without a PIN (there is nothing to unlock with). */

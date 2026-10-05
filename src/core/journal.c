@@ -96,50 +96,102 @@ jr_journal_is_unlocked (JrJournal *j)
   return j->key != NULL;
 }
 
-/* Shared by PIN and recovery unlock: lockout check, unwrap, bookkeeping. */
-static JrUnlockResult
-unlock_with (JrJournal *j, const char *setting, const char *secret, gint64 now)
+struct JrUnlockAttempt {
+  char  *wrapped; /* copy of the stored wrapped key */
+  char  *secret;  /* normalized PIN or recovery key; NULL if malformed */
+  gint64 now;
+  JrKey *key;     /* result of run(); NULL if the secret was wrong */
+};
+
+JrUnlockAttempt *
+jr_journal_begin_unlock (JrJournal *j, JrSecretKind kind, const char *secret, gint64 now)
 {
   if (jr_lockout_active (&j->lockout, now))
+    return NULL;
+
+  JrUnlockAttempt *a = g_new0 (JrUnlockAttempt, 1);
+  a->now = now;
+  if (kind == JR_SECRET_PIN)
+    {
+      a->wrapped = jr_db_get_setting (j->db, K_KEY_PIN);
+      if (jr_pin_valid (secret))
+        a->secret = g_strdup (secret);
+    }
+  else
+    {
+      char norm[JR_RECOVERY_NORM_LEN];
+      a->wrapped = jr_db_get_setting (j->db, K_KEY_RECOVERY);
+      if (jr_recovery_key_normalize (secret, norm))
+        a->secret = g_strdup (norm);
+      memset (norm, 0, sizeof norm);
+    }
+  return a;
+}
+
+void
+jr_unlock_attempt_run (JrUnlockAttempt *a)
+{
+  if (a->secret != NULL && a->wrapped != NULL)
+    a->key = jr_key_unwrap (a->wrapped, a->secret);
+}
+
+void
+jr_unlock_attempt_free (JrUnlockAttempt *a)
+{
+  if (a == NULL)
+    return;
+  jr_secret_free (a->secret);
+  jr_key_free (a->key);
+  g_free (a->wrapped);
+  g_free (a);
+}
+
+JrUnlockResult
+jr_journal_finish_unlock (JrJournal *j, JrUnlockAttempt *a)
+{
+  JrUnlockResult result;
+  if (a->key == NULL)
+    {
+      jr_lockout_fail (&j->lockout, a->now);
+      save_lockout (j);
+      result = JR_UNLOCK_WRONG;
+    }
+  else
+    {
+      jr_key_free (j->key);
+      j->key = a->key; /* ownership moves to the journal */
+      a->key = NULL;
+      if (j->lockout.failed != 0 || j->lockout.until != 0)
+        {
+          jr_lockout_success (&j->lockout);
+          save_lockout (j);
+        }
+      result = JR_UNLOCK_OK;
+    }
+  jr_unlock_attempt_free (a);
+  return result;
+}
+
+static JrUnlockResult
+unlock_now (JrJournal *j, JrSecretKind kind, const char *secret, gint64 now)
+{
+  JrUnlockAttempt *a = jr_journal_begin_unlock (j, kind, secret, now);
+  if (a == NULL)
     return JR_UNLOCK_WAIT;
-
-  JrKey *key = NULL;
-  if (secret != NULL)
-    {
-      g_autofree char *wrapped = jr_db_get_setting (j->db, setting);
-      key = jr_key_unwrap (wrapped, secret);
-    }
-  if (key == NULL)
-    {
-      jr_lockout_fail (&j->lockout, now);
-      save_lockout (j);
-      return JR_UNLOCK_WRONG;
-    }
-
-  jr_key_free (j->key);
-  j->key = key;
-  if (j->lockout.failed != 0 || j->lockout.until != 0)
-    {
-      jr_lockout_success (&j->lockout);
-      save_lockout (j);
-    }
-  return JR_UNLOCK_OK;
+  jr_unlock_attempt_run (a);
+  return jr_journal_finish_unlock (j, a);
 }
 
 JrUnlockResult
 jr_journal_unlock_pin (JrJournal *j, const char *pin, gint64 now)
 {
-  return unlock_with (j, K_KEY_PIN, jr_pin_valid (pin) ? pin : NULL, now);
+  return unlock_now (j, JR_SECRET_PIN, pin, now);
 }
 
 JrUnlockResult
 jr_journal_unlock_recovery (JrJournal *j, const char *recovery, gint64 now)
 {
-  char norm[JR_RECOVERY_NORM_LEN];
-  gboolean ok = jr_recovery_key_normalize (recovery, norm);
-  JrUnlockResult r = unlock_with (j, K_KEY_RECOVERY, ok ? norm : NULL, now);
-  memset (norm, 0, sizeof norm);
-  return r;
+  return unlock_now (j, JR_SECRET_RECOVERY, recovery, now);
 }
 
 gint64

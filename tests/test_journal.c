@@ -271,6 +271,48 @@ test_large_entry (Fixture *f, gconstpointer data)
   jr_journal_close (j);
 }
 
+static gpointer
+run_attempt (gpointer a)
+{
+  jr_unlock_attempt_run (a);
+  return NULL;
+}
+
+static void
+test_two_phase_unlock (Fixture *f, gconstpointer data)
+{
+  (void) data;
+  /* The slow part (run) touches only the attempt, so it can run on a
+   * worker thread while the database stays on the UI thread. */
+  JrJournal *j = open_journal (f);
+  char *recovery = jr_journal_enable_pin (j, "123456");
+  jr_journal_lock (j);
+
+  JrUnlockAttempt *a = jr_journal_begin_unlock (j, JR_SECRET_PIN, "654321", T0);
+  g_assert_nonnull (a);
+  GThread *th = g_thread_new ("kdf", run_attempt, a);
+  g_thread_join (th);
+  g_assert_cmpint (jr_journal_finish_unlock (j, a), ==, JR_UNLOCK_WRONG);
+  g_assert_cmpint (jr_journal_tries_left (j), ==, 4);
+
+  a = jr_journal_begin_unlock (j, JR_SECRET_RECOVERY, recovery, T0);
+  jr_unlock_attempt_run (a);
+  g_assert_cmpint (jr_journal_finish_unlock (j, a), ==, JR_UNLOCK_OK);
+  g_assert_true (jr_journal_is_unlocked (j));
+
+  /* During a lockout begin returns NULL and nothing is checked. */
+  jr_journal_lock (j);
+  for (int i = 0; i < 5; i++)
+    jr_journal_unlock_pin (j, "000000", T0);
+  g_assert_null (jr_journal_begin_unlock (j, JR_SECRET_PIN, "123456", T0 + 1));
+
+  /* An attempt can be dropped without finishing (window closed). */
+  a = jr_journal_begin_unlock (j, JR_SECRET_PIN, "123456", T0 + 60);
+  jr_unlock_attempt_free (a);
+  jr_journal_close (j);
+  jr_secret_free (recovery);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -285,6 +327,7 @@ main (int argc, char **argv)
   ADD ("/journal/update-delete", test_update_delete_and_stats);
   ADD ("/journal/lock-on-sleep", test_lock_on_sleep_setting);
   ADD ("/journal/large-entry", test_large_entry);
+  ADD ("/journal/two-phase", test_two_phase_unlock);
 #undef ADD
   return g_test_run ();
 }
