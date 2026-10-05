@@ -7,7 +7,8 @@
 # 2. Fallback: GTK's Broadway backend (functional checks only).
 # 3. Neither available: exit 77, which meson reports as "skipped".
 #
-# JR_UI_VISIBLE=1 runs on the real display instead.
+# Test files go to a private TMPDIR that is deleted afterwards, even if
+# the test crashes. JR_UI_VISIBLE=1 runs on the real display instead.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 
@@ -30,7 +31,8 @@ if [ "${JR_IN_HEADLESS_SHELL:-0}" = 1 ]; then
     echo "headless gnome-shell did not start:"; tail -5 "$XDG_RUNTIME_DIR/shell.log"
     exit 99
   fi
-  WAYLAND_DISPLAY=jr-test GDK_BACKEND=wayland GTK_A11Y=none "$@"
+  mkdir -p "$XDG_RUNTIME_DIR/tmp"
+  TMPDIR="$XDG_RUNTIME_DIR/tmp" WAYLAND_DISPLAY=jr-test GDK_BACKEND=wayland GTK_A11Y=none "$@"
   status=$?
   kill "$shell" 2>/dev/null
   wait "$shell" 2>/dev/null
@@ -54,13 +56,16 @@ if command -v gtk4-broadwayd >/dev/null 2>&1; then
   dir="${XDG_RUNTIME_DIR:-/tmp}"
   n=40
   while [ -e "$dir/broadway$((n + 1)).socket" ]; do n=$((n + 1)); done
+  tmp=$(mktemp -d "$dir/jr-ui.XXXXXX") || exit 99
   gtk4-broadwayd ":$n" >/dev/null 2>&1 &
   daemon=$!
-  trap 'kill "$daemon" 2>/dev/null; wait "$daemon" 2>/dev/null' EXIT INT TERM
+  # broadwayd leaves its socket behind when killed, so remove it too.
+  trap 'kill "$daemon" 2>/dev/null; wait "$daemon" 2>/dev/null;
+        rm -f "$dir/broadway$((n + 1)).socket"; rm -rf "${tmp:?}"' EXIT INT TERM
   i=0
   while [ ! -e "$dir/broadway$((n + 1)).socket" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-  env -u WAYLAND_DISPLAY -u DISPLAY GDK_BACKEND=broadway BROADWAY_DISPLAY=":$n" \
-    GSK_RENDERER=broadway "$@"
+  env -u WAYLAND_DISPLAY -u DISPLAY TMPDIR="$tmp" GDK_BACKEND=broadway \
+    BROADWAY_DISPLAY=":$n" GSK_RENDERER=broadway "$@"
   exit $?
 fi
 

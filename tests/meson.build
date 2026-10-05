@@ -1,14 +1,17 @@
 # Unit tests. Run under sanitizers with:
 #   meson setup build-asan -Db_sanitize=address,undefined -Dbuildtype=debug
 # and under Valgrind with:
-#   meson test -C build --wrap='valgrind --leak-check=full --error-exitcode=1'
+#   JR_TEST_WRAPPER='valgrind --leak-check=full --error-exitcode=1' meson test -C build --suite core
 test_env = environment()
 test_env.set('G_DEBUG', 'fatal-warnings')
 test_env.set('G_SLICE', 'always-malloc')
 
+isolated = find_program('run-isolated.sh')
+
 foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'journal', 'text']
   exe = executable('test_' + name, 'test_' + name + '.c', dependencies : core_dep)
-  test(name, exe, env : test_env, suite : 'core')
+  # run-isolated.sh: test files live in a private TMPDIR removed afterwards.
+  test(name, isolated, args : [exe], env : test_env, suite : 'core')
 endforeach
 
 # Drives the real window on a private headless display (never on the

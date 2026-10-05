@@ -129,12 +129,14 @@ meson setup build-asan -Db_sanitize=address,undefined -Dbuildtype=debug
 meson test -C build-asan --suite core                      # with leak detection
 ASAN_OPTIONS=detect_leaks=0 meson test -C build-asan --suite ui
 
-# Valgrind
-meson test -C build --suite core \
-  --wrap='valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=1'
+# Valgrind (applied to the test binaries, not the runner script)
+JR_TEST_WRAPPER='valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=1' \
+  meson test -C build --suite core
 ```
 
-UI tests never open windows on your desktop. `tests/run-headless.sh`
+Every test writes its journals and keys into a private temporary folder
+that is deleted when the test ends, even if it crashes
+(`tests/run-isolated.sh`). UI tests never open windows on your desktop. `tests/run-headless.sh`
 starts a private headless GNOME Shell (a real Wayland compositor) on its
 own D-Bus bus with its own config dirs, runs the test there, and shuts it
 down. Without gnome-shell it falls back to GTK's Broadway backend, and
