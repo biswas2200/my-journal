@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Journal
+GenericName=Daily journal
+Comment=A private daily journal that stays on this laptop
+Exec=journal
+Icon=io.github.biswas2200.Journal
+Terminal=false
+Categories=Utility;GTK;
+Keywords=diary;journal;notes;writing;
+StartupNotify=true
+SingleMainWindow=true

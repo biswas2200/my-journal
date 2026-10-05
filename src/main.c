@@ -55,6 +55,7 @@ on_activate (GApplication *app)
     }
 
   load_theme ();
+  gtk_window_set_default_icon_name (APP_ID);
   g_autofree char *path = database_path ();
   GError *error = NULL;
   JrJournal *journal = jr_journal_open (path, &error);

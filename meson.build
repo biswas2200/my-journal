@@ -76,4 +76,10 @@ executable('journal', 'src/main.c',
   install : true,
 )
 
+install_data('data/io.github.biswas2200.Journal.desktop',
+  install_dir : get_option('datadir') / 'applications')
+install_data('data/icons/hicolor/scalable/apps/io.github.biswas2200.Journal.svg',
+  install_dir : get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps')
+gnome.post_install(gtk_update_icon_cache : true, update_desktop_database : true)
+
 subdir('tests')

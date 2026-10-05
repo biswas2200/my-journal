@@ -139,7 +139,7 @@ static GtkWidget *
 toggle_new (gboolean on, const char *label)
 {
   GtkWidget *b = gtk_button_new ();
-  gtk_widget_add_css_class (b, "toggle");
+  gtk_widget_add_css_class (b, "jr-switch");
   if (on)
     gtk_widget_add_css_class (b, "on");
   GtkWidget *knob = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);

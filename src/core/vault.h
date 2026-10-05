@@ -21,8 +21,10 @@ typedef struct {
   gsize   mem; /* Argon2id memory in bytes */
 } JrKdfCost;
 
-/* Defaults: 3 passes over 64 MiB (memory is freed right after unlock). */
-#define JR_KDF_OPS_DEFAULT 3
+/* Defaults: 8 passes over 64 MiB, about 0.2 s on a recent laptop. The
+ * 64 MiB is only held during the check and freed right after. A 6-digit
+ * PIN has a million values, so this cost is what slows offline guessing. */
+#define JR_KDF_OPS_DEFAULT 8
 #define JR_KDF_MEM_DEFAULT (64u * 1024u * 1024u)
 /* libsodium minimums; only for tests. */
 #define JR_KDF_OPS_MIN 1

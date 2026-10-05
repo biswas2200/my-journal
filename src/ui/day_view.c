@@ -631,13 +631,18 @@ jr_day_view_new (JrWindow *win, JrDay day, GtkWidget **header_out)
 }
 
 /* GtkTextView only measures wrapped text it has validated. Text loaded
- * before the view had a width keeps a one-line height, so once the view
- * is laid out, validate each block to its end and re-measure it. */
+ * before the view had a width keeps a one-line height. So on the first
+ * frame where the blocks have their real width, validate each block to
+ * its end and re-measure it, then stop. */
 static gboolean
-remeasure_blocks (gpointer data)
+remeasure_tick (GtkWidget *widget, GdkFrameClock *clock, gpointer data)
 {
-  JrDayView *self = data;
-  self->remeasure_id = 0;
+  (void) clock; (void) data;
+  JrDayView *self = JR_DAY_VIEW (widget);
+  Block *first = self->blocks->len > 0 ? g_ptr_array_index (self->blocks, 0) : NULL;
+  if (first != NULL && gtk_widget_get_width (first->text) <= 1)
+    return G_SOURCE_CONTINUE; /* not laid out yet */
+
   for (guint i = 0; i < self->blocks->len; i++)
     {
       Block *b = g_ptr_array_index (self->blocks, i);
@@ -647,6 +652,7 @@ remeasure_blocks (gpointer data)
       gtk_text_view_get_line_yrange (GTK_TEXT_VIEW (b->text), &end, &y, &h);
       gtk_widget_queue_resize (b->text);
     }
+  self->remeasure_id = 0;
   return G_SOURCE_REMOVE;
 }
 
@@ -656,7 +662,7 @@ on_view_map (GtkWidget *widget, gpointer data)
   (void) data;
   JrDayView *self = JR_DAY_VIEW (widget);
   if (self->remeasure_id == 0)
-    self->remeasure_id = g_idle_add_full (G_PRIORITY_LOW, remeasure_blocks, self, NULL);
+    self->remeasure_id = gtk_widget_add_tick_callback (widget, remeasure_tick, NULL, NULL);
 }
 
 static void
@@ -665,7 +671,9 @@ jr_day_view_dispose (GObject *object)
   JrDayView *self = JR_DAY_VIEW (object);
   g_clear_handle_id (&self->save_id, g_source_remove);
   g_clear_handle_id (&self->words_id, g_source_remove);
-  g_clear_handle_id (&self->remeasure_id, g_source_remove);
+  if (self->remeasure_id != 0)
+    gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->remeasure_id);
+  self->remeasure_id = 0;
   /* Wipe and free blocks while their buffers still exist. */
   g_clear_pointer (&self->blocks, g_ptr_array_unref);
   G_OBJECT_CLASS (jr_day_view_parent_class)->dispose (object);

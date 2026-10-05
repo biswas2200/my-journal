@@ -37,6 +37,15 @@ pump (int ms)
     g_main_context_iteration (NULL, TRUE);
 }
 
+/* Pumps until `w` is taller than `min` px or `ms` pass; returns its height. */
+static int
+wait_for_height (GtkWidget *w, int min, int ms)
+{
+  for (int waited = 0; gtk_widget_get_height (w) <= min && waited < ms; waited += 20)
+    pump (20);
+  return gtk_widget_get_height (w);
+}
+
 static void
 shot (GtkWidget *w, const char *name)
 {
@@ -259,7 +268,7 @@ test_ui_flow (void)
   g_string_free (text, TRUE);
   /* Regression: loaded text wraps to its full height, not one line. */
   GtkWidget *first = find_type (gtk_window_get_child (GTK_WINDOW (win)), GTK_TYPE_TEXT_VIEW);
-  g_assert_cmpint (gtk_widget_get_height (first), >, 45);
+  g_assert_cmpint (wait_for_height (first, 45, 3000), >, 45);
   shot (GTK_WIDGET (win), "02c-today-reloaded");
 
   /* Quit locks and wipes. */
