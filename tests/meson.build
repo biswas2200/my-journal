@@ -6,7 +6,7 @@ test_env = environment()
 test_env.set('G_DEBUG', 'fatal-warnings')
 test_env.set('G_SLICE', 'always-malloc')
 
-foreach name : ['jdate', 'active_time', 'shade', 'lockout']
+foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'journal']
   exe = executable('test_' + name, 'test_' + name + '.c', dependencies : core_dep)
   test(name, exe, env : test_env, suite : 'core')
 endforeach
