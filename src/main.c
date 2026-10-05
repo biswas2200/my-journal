@@ -76,9 +76,13 @@ on_activate (GApplication *app)
 static gboolean
 on_signal (gpointer app)
 {
-  GList *windows = gtk_application_get_windows (GTK_APPLICATION (app));
+  /* Closing a window removes it from the application's list, so walk a
+   * referenced copy rather than the live list. */
+  GList *windows = g_list_copy_deep (gtk_application_get_windows (GTK_APPLICATION (app)),
+                                     (GCopyFunc) (void (*) (void)) g_object_ref, NULL);
   for (GList *l = windows; l != NULL; l = l->next)
     gtk_window_close (l->data);
+  g_list_free_full (windows, g_object_unref);
   return G_SOURCE_CONTINUE;
 }
 

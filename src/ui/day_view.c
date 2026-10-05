@@ -24,6 +24,7 @@ typedef struct {
   guint          words;
   GtkWidget     *row, *stamp, *text;
   GtkTextBuffer *buffer;
+  GtkEventController *focus;
   gulong         changed_id;
 } Block;
 
@@ -36,6 +37,7 @@ struct _JrDayView {
   gboolean   editable;
   GPtrArray *blocks;       /* Block*, in display order */
   guint      save_id, words_id, remeasure_id;
+  int        remeasure_frames;
   gint64     last_edit;    /* unix seconds of the last keystroke here */
   int        clock_minute; /* minute last drawn on the clock */
   gboolean   save_failed;
@@ -231,6 +233,10 @@ static void
 block_free (gpointer data)
 {
   Block *b = data;
+  /* The text view outlives this struct by a moment while GTK tears the
+   * screen down, and losing focus then would call back into freed memory. */
+  if (b->focus != NULL)
+    g_signal_handlers_disconnect_by_data (b->focus, b);
   if (b->buffer != NULL)
     {
       g_signal_handler_disconnect (b->buffer, b->changed_id);
@@ -283,10 +289,10 @@ add_block (JrDayView *self, gint64 id, gint64 stamped_at, const char *text)
   b->changed_id = g_signal_connect (b->buffer, "changed", G_CALLBACK (on_buffer_changed), b);
   gtk_box_append (GTK_BOX (b->row), b->text);
 
-  GtkEventController *focus = gtk_event_controller_focus_new ();
-  g_signal_connect (focus, "enter", G_CALLBACK (on_focus_enter), b);
-  g_signal_connect (focus, "leave", G_CALLBACK (on_focus_leave), b);
-  gtk_widget_add_controller (b->text, focus);
+  b->focus = gtk_event_controller_focus_new ();
+  g_signal_connect (b->focus, "enter", G_CALLBACK (on_focus_enter), b);
+  g_signal_connect (b->focus, "leave", G_CALLBACK (on_focus_leave), b);
+  gtk_widget_add_controller (b->text, b->focus);
 
   gtk_box_append (GTK_BOX (self->blocks_box), b->row);
   g_ptr_array_add (self->blocks, b);
@@ -630,28 +636,45 @@ jr_day_view_new (JrWindow *win, JrDay day, GtkWidget **header_out)
   return self;
 }
 
-/* GtkTextView only measures wrapped text it has validated. Text loaded
- * before the view had a width keeps a one-line height. So on the first
- * frame where the blocks have their real width, validate each block to
- * its end and re-measure it, then stop. */
+/* GtkTextView (GTK 4.22) wraps freshly loaded text while it is being
+ * allocated, and the resize it asks for at that moment is dropped, so a
+ * loaded block can stay one line tall although its text is laid out on
+ * several. Each frame, compare every block's height with the bottom of
+ * its laid-out text and ask for a resize from outside allocation. Stops
+ * once all blocks fit (normally after a frame or two), so the frame clock
+ * is not kept running. */
+#define REMEASURE_MAX_FRAMES 300
+
 static gboolean
 remeasure_tick (GtkWidget *widget, GdkFrameClock *clock, gpointer data)
 {
   (void) clock; (void) data;
   JrDayView *self = JR_DAY_VIEW (widget);
-  Block *first = self->blocks->len > 0 ? g_ptr_array_index (self->blocks, 0) : NULL;
-  if (first != NULL && gtk_widget_get_width (first->text) <= 1)
-    return G_SOURCE_CONTINUE; /* not laid out yet */
+  gboolean pending = FALSE;
 
   for (guint i = 0; i < self->blocks->len; i++)
     {
       Block *b = g_ptr_array_index (self->blocks, i);
+      GtkTextView *tv = GTK_TEXT_VIEW (b->text);
+      if (gtk_widget_get_width (b->text) <= 1)
+        {
+          pending = TRUE; /* not laid out yet */
+          continue;
+        }
       GtkTextIter end;
-      int y, h;
+      int y = 0, h = 0;
       gtk_text_buffer_get_end_iter (b->buffer, &end);
-      gtk_text_view_get_line_yrange (GTK_TEXT_VIEW (b->text), &end, &y, &h);
-      gtk_widget_queue_resize (b->text);
+      gtk_text_view_get_line_yrange (tv, &end, &y, &h);
+      int needed = y + h + gtk_text_view_get_top_margin (tv) + gtk_text_view_get_bottom_margin (tv);
+      if (gtk_widget_get_height (b->text) < needed)
+        {
+          gtk_widget_queue_resize (b->text);
+          pending = TRUE;
+        }
     }
+
+  if (pending && ++self->remeasure_frames < REMEASURE_MAX_FRAMES)
+    return G_SOURCE_CONTINUE;
   self->remeasure_id = 0;
   return G_SOURCE_REMOVE;
 }

@@ -37,12 +37,24 @@ pump (int ms)
     g_main_context_iteration (NULL, TRUE);
 }
 
-/* Pumps until `w` is taller than `min` px or `ms` pass; returns its height. */
-static int
-wait_for_height (GtkWidget *w, int min, int ms)
+static gboolean
+count_frame (GtkWidget *w, GdkFrameClock *clock, gpointer data)
 {
+  (void) w; (void) clock;
+  (*(int *) data)++;
+  return G_SOURCE_CONTINUE;
+}
+
+/* Pumps until `w` is taller than `min` px or `ms` pass; returns its height.
+ * *frames gets how many frames the compositor let GTK draw meanwhile. */
+static int
+wait_for_height (GtkWidget *w, int min, int ms, int *frames)
+{
+  *frames = 0;
+  guint id = gtk_widget_add_tick_callback (w, count_frame, frames, NULL);
   for (int waited = 0; gtk_widget_get_height (w) <= min && waited < ms; waited += 20)
     pump (20);
+  gtk_widget_remove_tick_callback (w, id);
   return gtk_widget_get_height (w);
 }
 
@@ -195,11 +207,13 @@ test_ui_flow (void)
   jr_journal_foreach_entry (j, today_iso, count_entry, &n);
   g_assert_cmpint (n, ==, 2);
 
-  /* 03 Day dropdown. */
-  jr_day_view_open_days (dv);
-  pump (400);
+  /* 03 Day dropdown. Without a real input event, Wayland may refuse a
+   * grabbing popup, so the test opens it without autohide. */
   GtkWidget *menu = find_type (gtk_window_get_titlebar (GTK_WINDOW (win)), GTK_TYPE_MENU_BUTTON);
   GtkPopover *pop = gtk_menu_button_get_popover (GTK_MENU_BUTTON (menu));
+  gtk_popover_set_autohide (pop, FALSE);
+  jr_day_view_open_days (dv);
+  pump (400);
   g_assert_true (gtk_widget_get_visible (GTK_WIDGET (pop)));
   g_assert_nonnull (gtk_popover_get_child (pop));
   shot (GTK_WIDGET (win), "03-dropdown-behind");
@@ -266,9 +280,15 @@ test_ui_flow (void)
   collect_text (GTK_WIDGET (win), text);
   g_assert_nonnull (strstr (text->str, "Evening check-in"));
   g_string_free (text, TRUE);
+  /* Loading text is not an undoable edit: Ctrl+Z must not erase an entry. */
+  GtkWidget *loaded = find_type (gtk_window_get_child (GTK_WINDOW (win)), GTK_TYPE_TEXT_VIEW);
+  g_assert_false (gtk_text_buffer_get_can_undo (gtk_text_view_get_buffer (GTK_TEXT_VIEW (loaded))));
   /* Regression: loaded text wraps to its full height, not one line. */
   GtkWidget *first = find_type (gtk_window_get_child (GTK_WINDOW (win)), GTK_TYPE_TEXT_VIEW);
-  g_assert_cmpint (wait_for_height (first, 45, 3000), >, 45);
+  int frames = 0;
+  int height = wait_for_height (first, 45, 3000, &frames);
+  g_test_message ("loaded block height %d after %d frames", height, frames);
+  g_assert_cmpint (height, >, 45);
   shot (GTK_WIDGET (win), "02c-today-reloaded");
 
   /* Quit locks and wipes. */
@@ -298,10 +318,12 @@ tour (JrWindow *win, JrJournal *j)
     type_text (win, "x");
   if (parts & 4)
     {
+      GtkWidget *menu = find_type (gtk_window_get_titlebar (GTK_WINDOW (win)), GTK_TYPE_MENU_BUTTON);
+      GtkPopover *pop = gtk_menu_button_get_popover (GTK_MENU_BUTTON (menu));
+      gtk_popover_set_autohide (pop, FALSE);
       jr_day_view_open_days (jr_window_get_day_view (win));
       pump (30);
-      GtkWidget *menu = find_type (gtk_window_get_titlebar (GTK_WINDOW (win)), GTK_TYPE_MENU_BUTTON);
-      gtk_popover_popdown (gtk_menu_button_get_popover (GTK_MENU_BUTTON (menu)));
+      gtk_popover_popdown (pop);
     }
   if (parts & 8)
     {
@@ -351,6 +373,11 @@ test_ui_no_growth (void)
       g_test_skip ("heap numbers are not meaningful under a sanitizer");
       return;
     }
+  if (g_str_equal (G_OBJECT_TYPE_NAME (gdk_display_get_default ()), "GdkBroadwayDisplay"))
+    {
+      g_test_skip ("Broadway keeps per-surface caches; heap numbers need a real compositor");
+      return;
+    }
   g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
   JrJournal *j = jr_journal_open (path, NULL);
@@ -382,6 +409,124 @@ test_ui_no_growth (void)
   g_rmdir (dir);
 }
 
+typedef struct {
+  gboolean found;
+  const char *needle;
+} Find;
+
+static void
+find_text (gint64 id, gint64 stamped_at, const char *text, gpointer user)
+{
+  (void) id; (void) stamped_at;
+  Find *f = user;
+  if (strstr (text, f->needle) != NULL)
+    f->found = TRUE;
+}
+
+static gboolean
+saved_today (JrJournal *j, const char *needle)
+{
+  char iso[JR_ISO_LEN];
+  jr_day_to_iso (jr_day_today (), iso);
+  Find f = { FALSE, needle };
+  jr_journal_foreach_entry (j, iso, find_text, &f);
+  return f.found;
+}
+
+/* Spec manual checks "quit while writing" and "lid close while writing",
+ * automated: text typed a moment before quitting or sleeping is saved
+ * even though the 1 s autosave has not fired yet. */
+static void
+test_ui_saves_on_quit_and_sleep (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+
+  /* Quit while writing. */
+  JrJournal *j = jr_journal_open (path, NULL);
+  jr_journal_set_kdf_cost (j, FAST);
+  JrWindow *win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (300);
+  type_text (win, "typed just before quitting");
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win)); /* no pump: autosave cannot have run */
+  pump (100);
+  g_assert_null (win); /* destroyed, so the key is wiped and the file closed */
+  j = jr_journal_open (path, NULL);
+  jr_journal_set_kdf_cost (j, FAST);
+  g_assert_true (saved_today (j, "typed just before quitting"));
+
+  /* Lid close (sleep) while writing. */
+  char *recovery = jr_journal_enable_pin (j, "123456");
+  win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (300);
+  type_text (win, " and before the lid closed");
+  jr_window_lock (win, JR_LOCK_SLEEP);
+  g_assert_false (jr_journal_is_unlocked (j));
+  g_assert_cmpint (jr_journal_unlock_pin (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
+  g_assert_true (saved_today (j, "and before the lid closed"));
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+
+  jr_secret_free (recovery);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
+/* Spec manual check "very long entry", automated: a ~1 MiB paste saves
+ * and the window keeps responding. */
+static void
+test_ui_long_entry (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+  JrJournal *j = jr_journal_open (path, NULL);
+  JrWindow *win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (300);
+
+  GString *big = g_string_sized_new (1 << 20);
+  /* Real writing has paragraphs; GTK re-wraps only the edited one. */
+  for (int i = 0; big->len < (1 << 20); i++)
+    g_string_append (big, i % 5 == 4 ? "The loop was shorter this time.\n\n"
+                                     : "The loop showed up again around dinner. ");
+  g_string_append (big, "THE-END");
+
+  gint64 t0 = g_get_monotonic_time ();
+  type_text (win, big->str);
+  pump (50);
+  gint64 t1 = g_get_monotonic_time ();
+  jr_day_view_save (jr_window_get_day_view (win));
+  gint64 t2 = g_get_monotonic_time ();
+  /* Typing one more character into a huge block stays quick. */
+  type_text (win, "!");
+  pump (16);
+  gint64 t3 = g_get_monotonic_time ();
+  g_test_message ("paste+layout %.0f ms, save %.0f ms, next keystroke %.0f ms",
+                  (t1 - t0) / 1000.0, (t2 - t1) / 1000.0, (t3 - t2) / 1000.0);
+  g_assert_true (saved_today (j, "THE-END"));
+  g_assert_cmpint (t2 - t1, <, 500 * 1000);
+  g_assert_cmpint (t3 - t2, <, 150 * 1000);
+
+  g_string_free (big, TRUE);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -390,5 +535,7 @@ main (int argc, char **argv)
   g_assert_true (jr_crypto_init ());
   g_test_add_func ("/ui/flow", test_ui_flow);
   g_test_add_func ("/ui/no-growth", test_ui_no_growth);
+  g_test_add_func ("/ui/save-on-quit-and-sleep", test_ui_saves_on_quit_and_sleep);
+  g_test_add_func ("/ui/long-entry", test_ui_long_entry);
   return g_test_run ();
 }

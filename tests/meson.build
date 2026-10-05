@@ -11,6 +11,8 @@ foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'jour
   test(name, exe, env : test_env, suite : 'core')
 endforeach
 
-# Drives the real window; skipped without a display.
+# Drives the real window on a private headless display (never on the
+# desktop); see run-headless.sh. Skipped if no headless display exists.
 ui_test = executable('test_ui', 'test_ui.c', dependencies : ui_dep)
-test('ui', ui_test, env : test_env, suite : 'ui', timeout : 60)
+test('ui', find_program('run-headless.sh'), args : [ui_test],
+     env : test_env, suite : 'ui', timeout : 120)
