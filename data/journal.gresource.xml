@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/biswas2200/Journal">
+    <file compressed="true">style.css</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-lock-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-chart-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-chevron-down-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-chevron-up-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-chevron-left-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-chevron-right-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-arrow-left-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-plus-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/jr-check-symbolic.svg</file>
+  </gresource>
+</gresources>

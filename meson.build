@@ -42,4 +42,38 @@ core_dep = declare_dependency(
   dependencies : core_deps,
 )
 
+# App
+gtk_dep = dependency('gtk4', version : '>= 4.12')
+gnome = import('gnome')
+resources = gnome.compile_resources('journal-resources',
+  'data/journal.gresource.xml',
+  source_dir : 'data',
+  c_name : 'journal',
+)
+ui_src = files(
+  'src/ui/window.c',
+  'src/ui/lock_view.c',
+  'src/ui/day_view.c',
+  'src/ui/day_popover.c',
+  'src/ui/activity_view.c',
+  'src/ui/bar_chart.c',
+  'src/ui/security_view.c',
+  'src/ui/pin_dialog.c',
+  'src/ui/sleep_watch.c',
+  'src/ui/widgets.c',
+)
+ui_lib = static_library('journal-ui', ui_src, resources[1],
+  dependencies : [core_dep, gtk_dep],
+)
+ui_dep = declare_dependency(
+  link_with : ui_lib,
+  sources : resources,  # compiled into each program so they always register
+  include_directories : include_directories('src/ui'),
+  dependencies : [core_dep, gtk_dep],
+)
+executable('journal', 'src/main.c',
+  dependencies : ui_dep,
+  install : true,
+)
+
 subdir('tests')

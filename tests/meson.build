@@ -10,3 +10,7 @@ foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'jour
   exe = executable('test_' + name, 'test_' + name + '.c', dependencies : core_dep)
   test(name, exe, env : test_env, suite : 'core')
 endforeach
+
+# Drives the real window; skipped without a display.
+ui_test = executable('test_ui', 'test_ui.c', dependencies : ui_dep)
+test('ui', ui_test, env : test_env, suite : 'ui', timeout : 60)
