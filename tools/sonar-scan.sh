@@ -14,8 +14,11 @@ cd "$(dirname "$0")/.."
 : "${SONAR_TOKEN:?set SONAR_TOKEN (a SonarQube analysis token)}"
 [ -f build/compile_commands.json ] || meson setup build
 here=$(pwd)
+mkdir -p "$HOME/.sonar"
+# The token goes in as an environment variable, never on a command line.
 exec docker run --rm --network host \
-  -e SONAR_HOST_URL -e SONAR_TOKEN \
+  -e SONAR_HOST_URL -e SONAR_TOKEN -e SONAR_USER_HOME=/sonar-home \
+  -v "$HOME/.sonar:/sonar-home" \
   -v "$here:$here" -w "$here" \
   --user "$(id -u):$(id -g)" \
   sonarsource/sonar-scanner-cli:latest

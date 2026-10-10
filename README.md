@@ -217,8 +217,21 @@ export SONAR_TOKEN=...            # an analysis token from your server
 tools/coverage.sh && tools/sonar-scan.sh
 ```
 
-C analysis needs a SonarQube edition that includes the C/C++ analyzer;
-check that "C" is listed under the server's languages.
+Result on SonarQube Community Build 26.8 (11 Oct 2026): quality gate
+passed, 0 bugs, 0 vulnerabilities, 0 security hotspots, 0 code smells,
+0% duplication, A ratings. Its first scan found 3 real issues in the
+stylesheet (two low-contrast text colours, one duplicated selector),
+now fixed. Two web-only CSS rules are switched off for `data/` because
+GTK CSS uses widget names a browser does not know (see the comment in
+`sonar-project.properties`).
+
+Note that Community Build has no C/C++ analyzer, so it checks the
+stylesheet, XML, desktop file and scripts, plus a secrets scan of every
+file, but not the C code. The C code is covered by the compiler
+(`-Werror`), GCC's analyzer, the sanitizers, Valgrind and the tests
+above. For Sonar rules on the C code too, use a SonarQube edition with
+C/C++ support, or SonarQube for IDE in VS Code with
+`build/compile_commands.json`.
 
 ## Layout
 
