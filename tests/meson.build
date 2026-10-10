@@ -8,7 +8,7 @@ test_env.set('G_SLICE', 'always-malloc')
 
 isolated = find_program('run-isolated.sh')
 
-foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'journal', 'text', 'harden']
+foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'journal', 'text', 'harden', 'crash']
   exe = executable('test_' + name, 'test_' + name + '.c', dependencies : core_dep)
   # run-isolated.sh: test files live in a private TMPDIR removed afterwards.
   test(name, isolated, args : [exe], env : test_env, suite : 'core')

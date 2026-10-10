@@ -39,6 +39,10 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Recovery key cannot be copied or selected | `/ui/flow` |
 | Writing area marked private for input methods | `/ui/flow` |
 | Real binary: non-dumpable, core dumps off, clean exit on SIGTERM | `hardened` |
+| Crash during saving (SIGKILL at random moments): no lost acknowledged save, file intact | `crash` (`/crash/entries-survive-kill`) |
+| Crash during a PIN change: old or new PIN still opens it, recovery key still works | `crash` (`/crash/lock-change-survives-kill`) |
+| Lock screen keyboard: PIN on 6th digit, Backspace/Esc, recovery key, 5 wrong PINs then wait | `/ui/pin-lock-screen` |
+| Day dropdown: typed dates, refusing bad/future dates, month pages | `/ui/day-dropdown` |
 
 ## Manual checks
 

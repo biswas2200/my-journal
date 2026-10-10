@@ -183,6 +183,43 @@ recovery key, word counting, process hardening, and the journal store
 persisted across restarts). The manual checklist is in
 [TESTING.md](TESTING.md).
 
+## Quality checks
+
+| Check | Result (10 Oct 2026) | How |
+| --- | --- | --- |
+| Unit, UI and integration tests | 12 suites, all pass | `meson test -C build` |
+| Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |
+| Static analysis (GCC `-fanalyzer`) | 0 findings in app and tests | `tools/analyze.sh` |
+| AddressSanitizer + UndefinedBehaviorSanitizer | clean | see Tests |
+| Valgrind memcheck | 0 errors, 0 leaks | see Tests |
+| Line coverage | 89.4% overall, 94.8% in `src/core` | `tools/coverage.sh` |
+| Compiler warnings | `-Wall -Wextra -Werror`, none | every build |
+
+What a crash can and cannot lose: entries are saved about a second
+after you stop typing, and on blur, lock and quit. SQLite runs with
+`synchronous=FULL` and every change is a transaction, so a crash, kill
+or power cut loses at most the last second of typing (and up to 15 s of
+the minutes counter), never anything already saved, and never leaves a
+half-written file. Lock changes are all-or-nothing. There is no backup
+feature in V1: the file is the only copy, so back up
+`~/.local/share/journal/journal.db` (it is encrypted, so a copy is as
+safe as the original).
+
+### SonarQube
+
+`sonar-project.properties` points SonarQube at the C sources, meson's
+`compile_commands.json` and the gcov reports. With a SonarQube server
+running:
+
+```bash
+export SONAR_HOST_URL=http://localhost:9000
+export SONAR_TOKEN=...            # an analysis token from your server
+tools/coverage.sh && tools/sonar-scan.sh
+```
+
+C analysis needs a SonarQube edition that includes the C/C++ analyzer;
+check that "C" is listed under the server's languages.
+
 ## Layout
 
 ```

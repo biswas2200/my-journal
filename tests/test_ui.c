@@ -721,6 +721,178 @@ test_ui_passphrase (void)
   g_rmdir (dir);
 }
 
+/* Presses a key on `widget` the way the keyboard would reach it. */
+static void
+press_key (GtkWidget *widget, guint keyval)
+{
+  GListModel *ctrls = gtk_widget_observe_controllers (widget);
+  for (guint i = 0; i < g_list_model_get_n_items (ctrls); i++)
+    {
+      GtkEventController *c = g_list_model_get_item (ctrls, i);
+      gboolean handled = FALSE;
+      if (GTK_IS_EVENT_CONTROLLER_KEY (c))
+        g_signal_emit_by_name (c, "key-pressed", keyval, 0, 0, &handled);
+      g_object_unref (c);
+      if (handled)
+        break;
+    }
+  g_object_unref (ctrls);
+}
+
+static void
+type_pin (GtkWidget *lock_view, const char *pin)
+{
+  for (const char *p = pin; *p != '\0'; p++)
+    press_key (lock_view, GDK_KEY_0 + (guint) (*p - '0'));
+}
+
+static gboolean
+wait_unlocked (JrJournal *j, int ms)
+{
+  for (int waited = 0; !jr_journal_is_unlocked (j) && waited < ms; waited += 20)
+    pump (20);
+  pump (50);
+  return jr_journal_is_unlocked (j);
+}
+
+/* Spec manual checks "wrong PIN five times" and the recovery key, driven
+ * through the real lock screen with key presses. */
+static void
+test_ui_pin_lock_screen (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+  JrJournal *j = jr_journal_open (path, NULL);
+  jr_journal_set_kdf_cost (j, FAST);
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456");
+  JrWindow *win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (200);
+
+  /* The right PIN unlocks on the sixth digit, no Enter needed. */
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  pump (100);
+  GtkWidget *view = gtk_window_get_child (GTK_WINDOW (win));
+  type_pin (view, "123456");
+  g_assert_true (wait_unlocked (j, 3000));
+  g_assert_nonnull (jr_window_get_day_view (win));
+
+  /* Backspace and Esc edit the digits before the sixth. */
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  pump (100);
+  view = gtk_window_get_child (GTK_WINDOW (win));
+  type_pin (view, "99");
+  press_key (view, GDK_KEY_BackSpace);
+  press_key (view, GDK_KEY_Escape);
+  type_pin (view, "123456");
+  g_assert_true (wait_unlocked (j, 3000));
+
+  /* Recovery key: a wrong one is refused, the right one unlocks and
+   * opens Lock & security (time to choose a new PIN). */
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  pump (100);
+  view = gtk_window_get_child (GTK_WINDOW (win));
+  g_signal_emit_by_name (find_button (view, "Forgot PIN? Use recovery key"), "clicked");
+  pump (50);
+  GtkWidget *rec = find_type (view, GTK_TYPE_ENTRY);
+  gtk_editable_set_text (GTK_EDITABLE (rec), "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA");
+  g_signal_emit_by_name (rec, "activate");
+  g_assert_true (wait_for_label (view, "does not match", 3000));
+  gtk_editable_set_text (GTK_EDITABLE (rec), recovery);
+  g_signal_emit_by_name (rec, "activate");
+  g_assert_true (wait_unlocked (j, 3000));
+  g_assert_true (has_label_containing (gtk_window_get_titlebar (GTK_WINDOW (win)), "Lock & security"));
+
+  /* Five wrong PINs: a 30 s wait, during which even the right PIN is ignored. */
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  pump (100);
+  view = gtk_window_get_child (GTK_WINDOW (win));
+  for (int i = 0; i < 4; i++)
+    {
+      type_pin (view, "000000");
+      g_assert_true (wait_for_label (view, i == 3 ? "1 try left" : "tries left", 3000));
+    }
+  type_pin (view, "000000");
+  g_assert_true (wait_for_label (view, "Too many wrong tries", 3000));
+  type_pin (view, "123456");
+  pump (300);
+  g_assert_false (jr_journal_is_unlocked (j));
+  g_assert_true (has_label_containing (view, "Try again in"));
+  shot (GTK_WIDGET (win), "01c-lockout");
+
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+  jr_secret_free (recovery);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
+/* Day dropdown: typed dates, bad input, and the month pages. */
+static void
+test_ui_day_dropdown (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+  JrJournal *j = jr_journal_open (path, NULL);
+  seed (j);
+  JrWindow *win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (200);
+
+  GtkWidget *menu = find_type (gtk_window_get_titlebar (GTK_WINDOW (win)), GTK_TYPE_MENU_BUTTON);
+  GtkPopover *pop = gtk_menu_button_get_popover (GTK_MENU_BUTTON (menu));
+  gtk_popover_set_autohide (pop, FALSE);
+  jr_day_view_open_days (jr_window_get_day_view (win));
+  pump (200);
+  GtkWidget *root = gtk_popover_get_child (pop);
+
+  /* Nonsense and future dates are refused in place. */
+  GtkWidget *entry = find_type (root, GTK_TYPE_ENTRY);
+  gtk_editable_set_text (GTK_EDITABLE (entry), "the 45th of Smarch");
+  g_signal_emit_by_name (entry, "activate");
+  g_assert_true (gtk_widget_has_css_class (entry, "error"));
+  gtk_editable_set_text (GTK_EDITABLE (entry), "2999-01-01");
+  g_signal_emit_by_name (entry, "activate");
+  g_assert_true (gtk_widget_has_css_class (entry, "error"));
+
+  /* An earlier month opens its list of written days. */
+  GtkWidget *months = NULL;
+  for (GtkWidget *w = find_type (root, GTK_TYPE_LIST_BOX); w != NULL; w = gtk_widget_get_next_sibling (w))
+    if (GTK_IS_LIST_BOX (w))
+      months = w; /* the last list on the main page is "Earlier" */
+  g_assert_nonnull (months);
+  GtkListBoxRow *month_row = gtk_list_box_get_row_at_index (GTK_LIST_BOX (months), 0);
+  g_assert_nonnull (month_row);
+  g_signal_emit_by_name (months, "row-activated", month_row);
+  pump (100);
+  GtkWidget *stack = find_type (root, GTK_TYPE_STACK);
+  g_assert_cmpstr (gtk_stack_get_visible_child_name (GTK_STACK (stack)), ==, "month");
+  shot (GTK_WIDGET (pop), "03b-dropdown-month");
+
+  /* "yesterday" opens yesterday's page (read-only). */
+  gtk_editable_set_text (GTK_EDITABLE (entry), "yesterday");
+  g_signal_emit_by_name (entry, "activate");
+  pump (200);
+  JrDayView *dv = jr_window_get_day_view (win);
+  g_assert_nonnull (dv);
+  g_assert_false (jr_day_view_is_current_today (dv));
+
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -732,5 +904,7 @@ main (int argc, char **argv)
   g_test_add_func ("/ui/save-on-quit-and-sleep", test_ui_saves_on_quit_and_sleep);
   g_test_add_func ("/ui/long-entry", test_ui_long_entry);
   g_test_add_func ("/ui/passphrase", test_ui_passphrase);
+  g_test_add_func ("/ui/pin-lock-screen", test_ui_pin_lock_screen);
+  g_test_add_func ("/ui/day-dropdown", test_ui_day_dropdown);
   return g_test_run ();
 }
