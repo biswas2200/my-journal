@@ -101,6 +101,7 @@ run_and_kill (void (*child) (const char *, int), const char *path)
     {
       close (fds[0]);
       child (path, fds[1]);
+      _exit (3); /* never reached: the child runs until it is killed */
     }
   close (fds[1]);
   g_usleep ((gulong) g_random_int_range (5, 80) * 1000);
