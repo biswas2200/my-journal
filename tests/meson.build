@@ -22,5 +22,5 @@ test('ui', find_program('run-headless.sh'), args : [ui_test],
 
 # The real program, started off-screen: memory protected, clean exit.
 test('hardened', find_program('run-headless.sh'),
-     args : [find_program('check-hardened.sh'), journal_exe],
+     args : [files('check-hardened.sh'), journal_exe],
      suite : 'ui', timeout : 60)
