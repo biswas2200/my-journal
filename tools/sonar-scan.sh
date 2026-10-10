@@ -1,6 +1,7 @@
 #!/bin/sh
 # Runs SonarQube's scanner (Docker image sonarsource/sonar-scanner-cli)
-# on this project. Needs a running SonarQube server.
+# on this project against a local SonarQube server. (SonarQube Cloud runs
+# from GitHub Actions instead.) SONAR_PROJECT_KEY defaults to "Journal".
 #
 #   export SONAR_HOST_URL=http://localhost:9000   # your server
 #   export SONAR_TOKEN=...                         # type it yourself
@@ -21,4 +22,5 @@ exec docker run --rm --network host \
   -v "$HOME/.sonar:/sonar-home" \
   -v "$here:$here" -w "$here" \
   --user "$(id -u):$(id -g)" \
-  sonarsource/sonar-scanner-cli:latest
+  sonarsource/sonar-scanner-cli:latest \
+  -Dsonar.projectKey="${SONAR_PROJECT_KEY:-Journal}" -Dsonar.organization=

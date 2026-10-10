@@ -123,6 +123,13 @@ jr_key_equal (const JrKey *a, const JrKey *b)
 }
 
 void
+jr_wipe (void *p, gsize len)
+{
+  if (p != NULL && len > 0)
+    sodium_memzero (p, len);
+}
+
+void
 jr_secret_free (char *s)
 {
   if (s == NULL)

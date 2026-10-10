@@ -163,7 +163,7 @@ jr_journal_begin_unlock (JrJournal *j, JrSecretKind kind, const char *secret, gi
       a->wrapped = jr_db_get_setting (j->db, K_KEY_RECOVERY);
       if (jr_recovery_key_normalize (secret, norm))
         a->secret = g_strdup (norm);
-      memset (norm, 0, sizeof norm);
+      jr_wipe (norm, sizeof norm);
     }
   return a;
 }
@@ -356,7 +356,7 @@ make_recovery (JrLockJob *job)
   job->recovery = jr_recovery_key_new ();
   jr_recovery_key_normalize (job->recovery, norm);
   job->wrapped_recovery = jr_key_wrap (job->key, norm, job->cost);
-  memset (norm, 0, sizeof norm);
+  jr_wipe (norm, sizeof norm);
   return job->wrapped_recovery != NULL;
 }
 

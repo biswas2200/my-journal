@@ -1,0 +1,83 @@
+# Builds, tests and analyzes Journal on every push and pull request.
+# The SonarQube Cloud step runs once the SONAR_TOKEN secret is set
+# (repo Settings > Secrets and variables > Actions).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-analyze:
+    runs-on: ubuntu-24.04
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history: Sonar needs it for blame and new code
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build pkg-config gcc libgtk-4-dev libgtk-4-bin \
+            libsqlite3-dev libsodium-dev mutter dbus dbus-daemon valgrind
+
+      - name: Build (all warnings are errors)
+        run: |
+          meson setup build
+          meson compile -C build
+
+      - name: Tests with coverage (UI tests on a private headless display)
+        run: tools/coverage.sh
+
+      - name: Valgrind (core tests)
+        run: >
+          JR_TEST_WRAPPER='valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=1 -q'
+          meson test -C build --suite core --timeout-multiplier 4 --print-errorlogs
+
+      - name: Static analyzer (GCC -fanalyzer)
+        run: tools/analyze.sh
+
+      - name: Report failing tests
+        if: failure()
+        run: |
+          for log in build*/meson-logs/testlog.txt; do
+            [ -f "$log" ] && grep -hE '^not ok|ERROR:' "$log" | head -20 | sed 's/^/::error::/' || true
+          done
+
+      - name: SonarQube Cloud
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v8
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build pkg-config gcc libgtk-4-dev libgtk-4-bin \
+            libsqlite3-dev libsodium-dev mutter dbus dbus-daemon
+
+      - name: Build with AddressSanitizer + UndefinedBehaviorSanitizer
+        run: |
+          meson setup build-asan -Db_sanitize=address,undefined -Dbuildtype=debug
+          meson compile -C build-asan
+
+      - name: Core tests (leak detection on)
+        run: meson test -C build-asan --suite core --print-errorlogs
+
+      - name: UI tests (GTK keeps global caches, so leak detection off)
+        run: ASAN_OPTIONS=detect_leaks=0 meson test -C build-asan --suite ui --print-errorlogs
+
+      - name: Report failing tests
+        if: failure()
+        run: grep -hE '^not ok|ERROR:' build-asan/meson-logs/testlog.txt | head -20 | sed 's/^/::error::/' || true

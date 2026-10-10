@@ -71,6 +71,11 @@ guint8  *jr_seal               (const JrKey *key, const char *text, gsize len, g
 /* NUL-terminated plaintext, or NULL if tampered. Free with jr_secret_free. */
 char    *jr_unseal             (const JrKey *key, const guint8 *blob, gsize len);
 
+/* Zeroes `len` bytes in a way the compiler may not optimize away (plain
+ * memset on a buffer about to go out of scope can be dropped). Use it for
+ * every secret. NULL with 0 is fine. */
+void     jr_wipe               (void *p, gsize len);
+
 /* Zeroes then frees a string from this module. NULL is fine. */
 void     jr_secret_free        (char *s);
 

@@ -1,9 +1,9 @@
 #!/bin/sh
 # Runs a GTK test without showing anything on the desktop.
 #
-# 1. Preferred: a private headless GNOME Shell (a real Wayland compositor,
-#    so focus, popovers and memory behave as on the desktop), with its own
-#    D-Bus session bus and its own config/data/cache dirs.
+# 1. Preferred: a private headless GNOME Shell or mutter (a real Wayland
+#    compositor, so focus, popovers and memory behave as on the desktop),
+#    with its own D-Bus session bus and its own config/data/cache dirs.
 # 2. Fallback: GTK's Broadway backend (functional checks only).
 # 3. Neither available: exit 77, which meson reports as "skipped".
 #
@@ -21,14 +21,14 @@ if [ "${JR_IN_HEADLESS_SHELL:-0}" = 1 ]; then
   # The test's strict settings (fatal warnings, sanitizers) are for the
   # test, not for the compositor.
   env -u G_DEBUG -u MALLOC_PERTURB_ -u ASAN_OPTIONS -u UBSAN_OPTIONS -u LD_PRELOAD \
-    gnome-shell --headless --wayland --no-x11 --virtual-monitor 1280x800 \
+    "$JR_COMPOSITOR" --headless --wayland --no-x11 --virtual-monitor 1280x800 \
     --wayland-display jr-test >"$XDG_RUNTIME_DIR/shell.log" 2>&1 &
   shell=$!
   i=0
   while [ ! -e "$XDG_RUNTIME_DIR/jr-test" ] && [ $i -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
   if [ ! -e "$XDG_RUNTIME_DIR/jr-test" ]; then
     kill "$shell" 2>/dev/null
-    echo "headless gnome-shell did not start:"; tail -5 "$XDG_RUNTIME_DIR/shell.log"
+    echo "headless $JR_COMPOSITOR did not start:"; tail -5 "$XDG_RUNTIME_DIR/shell.log"
     exit 99
   fi
   mkdir -p "$XDG_RUNTIME_DIR/tmp"
@@ -39,7 +39,11 @@ if [ "${JR_IN_HEADLESS_SHELL:-0}" = 1 ]; then
   exit $status
 fi
 
-if command -v gnome-shell >/dev/null 2>&1 && command -v dbus-run-session >/dev/null 2>&1; then
+compositor=""
+for c in gnome-shell mutter; do
+  if command -v "$c" >/dev/null 2>&1; then compositor=$c; break; fi
+done
+if [ -n "$compositor" ] && command -v dbus-run-session >/dev/null 2>&1; then
   # Wayland socket paths are limited to 108 bytes, so keep this short.
   base="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
   rt=$(mktemp -d "$base/jr-ui.XXXXXX") || exit 99
@@ -48,6 +52,7 @@ if command -v gnome-shell >/dev/null 2>&1 && command -v dbus-run-session >/dev/n
   env -u WAYLAND_DISPLAY -u DISPLAY -u DBUS_SESSION_BUS_ADDRESS \
     XDG_RUNTIME_DIR="$rt" XDG_CONFIG_HOME="$rt/config" XDG_DATA_HOME="$rt/data" \
     XDG_CACHE_HOME="$rt/cache" XDG_STATE_HOME="$rt/state" JR_IN_HEADLESS_SHELL=1 \
+    JR_COMPOSITOR="$compositor" \
     dbus-run-session --config-file="$here/headless-bus.conf" -- "$0" "$@"
   exit $?
 fi

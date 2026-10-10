@@ -201,6 +201,19 @@ test_default_cost_is_strong (void)
   g_assert_cmpuint (JR_KDF_MEM_DEFAULT, >=, 256u * 1024u * 1024u);
 }
 
+static void
+test_wipe (void)
+{
+  /* jr_wipe is the one way secrets are cleared: unlike memset, the
+   * compiler may not drop it even right before the buffer goes away. */
+  char buf[16];
+  g_strlcpy (buf, "123456", sizeof buf);
+  jr_wipe (buf, sizeof buf);
+  for (gsize i = 0; i < sizeof buf; i++)
+    g_assert_cmpint (buf[i], ==, 0);
+  jr_wipe (NULL, 0); /* harmless */
+}
+
 int
 main (int argc, char **argv)
 {
@@ -217,5 +230,6 @@ main (int argc, char **argv)
   g_test_add_func ("/vault/lock-secret-rules", test_lock_secret_rules);
   g_test_add_func ("/vault/key-dup-cost", test_key_dup_and_cost);
   g_test_add_func ("/vault/default-cost", test_default_cost_is_strong);
+  g_test_add_func ("/vault/wipe", test_wipe);
   return g_test_run ();
 }

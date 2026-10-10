@@ -30,7 +30,7 @@ G_DEFINE_FINAL_TYPE (JrLockView, jr_lock_view, GTK_TYPE_BOX)
 static void
 wipe_digits (JrLockView *self)
 {
-  memset (self->digits, 0, sizeof self->digits);
+  jr_wipe (self->digits, sizeof self->digits);
   self->count = 0;
   jr_pin_dots_set (self->dots, 0);
 }
@@ -181,7 +181,7 @@ on_key (GtkEventControllerKey *c, guint keyval, guint keycode, GdkModifierType s
   if (self->count == JR_PIN_LEN)
     {
       submit (self, JR_SECRET_LOCK, self->digits);
-      memset (self->digits, 0, sizeof self->digits);
+      jr_wipe (self->digits, sizeof self->digits);
       self->count = 0;
       /* Let the sixth dot show briefly, then clear while checking. */
       jr_pin_dots_set (self->dots, 0);
@@ -268,7 +268,7 @@ jr_lock_view_dispose (GObject *object)
 {
   JrLockView *self = JR_LOCK_VIEW (object);
   g_clear_handle_id (&self->countdown_id, g_source_remove);
-  memset (self->digits, 0, sizeof self->digits);
+  jr_wipe (self->digits, sizeof self->digits);
   if (self->recovery_entry != NULL)
     jr_wipe_editable (GTK_EDITABLE (self->recovery_entry));
   if (self->pass_entry != NULL)

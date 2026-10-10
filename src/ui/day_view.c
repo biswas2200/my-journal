@@ -673,7 +673,9 @@ remeasure_tick (GtkWidget *widget, GdkFrameClock *clock, gpointer data)
         }
     }
 
-  if (pending && ++self->remeasure_frames < REMEASURE_MAX_FRAMES)
+  if (pending)
+    self->remeasure_frames++;
+  if (pending && self->remeasure_frames < REMEASURE_MAX_FRAMES)
     return G_SOURCE_CONTINUE;
   self->remeasure_id = 0;
   return G_SOURCE_REMOVE;

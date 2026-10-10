@@ -201,7 +201,10 @@ jr_day_parse_input (const char *text, JrDay today, JrDay *out)
       d = (JrDay){ today.year, month, day };
       if (n == 3)
         {
-          if (strlen (words[2]) != 4 || (d.year = parse_number_word (words[2], 4)) < 1)
+          if (strlen (words[2]) != 4)
+            return FALSE;
+          d.year = parse_number_word (words[2], 4);
+          if (d.year < 1)
             return FALSE;
           have_year = TRUE;
         }

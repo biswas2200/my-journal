@@ -16,10 +16,13 @@ static void
 collect_entry (gint64 id, gint64 stamped_at, const void *body, gsize len, gpointer user)
 {
   Rows *r = user;
-  g_assert_cmpint (r->count, <, 8);
+  if (r->count >= 8 || len >= sizeof r->bodies[0])
+    {
+      g_test_fail_printf ("unexpected row %d (%" G_GSIZE_FORMAT " bytes)", r->count, len);
+      return;
+    }
   r->ids[r->count] = id;
   r->stamps[r->count] = stamped_at;
-  g_assert_cmpuint (len, <, sizeof r->bodies[0]);
   memcpy (r->bodies[r->count], body, len);
   r->bodies[r->count][len] = '\0';
   r->count++;
@@ -113,7 +116,11 @@ static void
 collect_day (const char *day, int entries, gint64 seconds, gpointer user)
 {
   Days *d = user;
-  g_assert_cmpint (d->count, <, 8);
+  if (d->count >= 8)
+    {
+      g_test_fail_printf ("unexpected day %s", day);
+      return;
+    }
   g_strlcpy (d->days[d->count], day, JR_DB_DAY_LEN);
   d->entries[d->count] = entries;
   d->seconds[d->count] = seconds;
@@ -156,6 +163,11 @@ static void
 collect_month (const char *month, int days_written, gpointer user)
 {
   Months *m = user;
+  if (m->count >= 4)
+    {
+      g_test_fail_printf ("unexpected month %s", month);
+      return;
+    }
   g_strlcpy (m->months[m->count], month, sizeof m->months[0]);
   m->days[m->count] = days_written;
   m->count++;

@@ -21,7 +21,7 @@ wipe_secrets (SecretDialog *d)
 {
   for (int i = 0; i < JR_SECRET_DIALOG_MAX_STEPS; i++)
     g_clear_pointer (&d->secrets[i], jr_secret_free);
-  memset (d->digits, 0, sizeof d->digits);
+  jr_wipe (d->digits, sizeof d->digits);
   d->count = 0;
 }
 
@@ -99,7 +99,7 @@ step_done (GtkWindow *dialog, SecretDialog *d, const char *secret)
       jr_secret_free (ok);
     }
   d->secrets[d->step] = g_strdup (secret);
-  memset (d->digits, 0, sizeof d->digits);
+  jr_wipe (d->digits, sizeof d->digits);
   d->count = 0;
   jr_wipe_editable (GTK_EDITABLE (d->entry));
 
