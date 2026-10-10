@@ -1,8 +1,6 @@
 /* lockout: see lockout.h. */
 #include "lockout.h"
 
-#include <stdio.h>
-
 gint64
 jr_lockout_remaining (const JrLockout *l, gint64 now)
 {
@@ -43,22 +41,58 @@ jr_lockout_success (JrLockout *l)
   l->until = 0;
 }
 
+gboolean
+jr_lockout_pin_blocked (const JrLockout *l)
+{
+  return l->pin_failed >= JR_PIN_MAX_TRIES;
+}
+
+int
+jr_lockout_pin_tries_left (const JrLockout *l)
+{
+  return JR_PIN_MAX_TRIES - l->pin_failed;
+}
+
+void
+jr_lockout_pin_fail (JrLockout *l)
+{
+  if (!jr_lockout_pin_blocked (l))
+    l->pin_failed++;
+}
+
+void
+jr_lockout_pin_success (JrLockout *l)
+{
+  *l = (JrLockout){ 0 };
+}
+
 void
 jr_lockout_to_string (const JrLockout *l, char *buf, gsize len)
 {
-  g_snprintf (buf, len, "%d:%" G_GINT64_FORMAT, l->failed, l->until);
+  g_snprintf (buf, len, "%d:%" G_GINT64_FORMAT ":%d", l->failed, l->until, l->pin_failed);
+}
+
+/* Plain decimal digits in [0, max]; no sign, spaces or overflow. */
+static gboolean
+read_number (const char *s, gint64 max, gint64 *out)
+{
+  if (s == NULL || !g_ascii_isdigit (*s))
+    return FALSE;
+  return g_ascii_string_to_signed (s, 10, 0, max, out, NULL);
 }
 
 gboolean
 jr_lockout_from_string (const char *s, JrLockout *out)
 {
-  int failed, consumed = 0;
-  gint64 until;
-  if (s == NULL ||
-      sscanf (s, "%d:%" G_GINT64_FORMAT "%n", &failed, &until, &consumed) != 2 ||
-      s[consumed] != '\0' || failed < 0 || failed >= JR_LOCKOUT_MAX_TRIES || until < 0)
+  if (s == NULL)
     return FALSE;
-  out->failed = failed;
-  out->until = until;
+  g_auto (GStrv) parts = g_strsplit (s, ":", 0);
+  guint n = g_strv_length (parts);
+  gint64 failed, until, pin_failed = 0;
+  if ((n != 2 && n != 3) || !read_number (parts[0], JR_LOCKOUT_MAX_TRIES - 1, &failed) ||
+      !read_number (parts[1], G_MAXINT64, &until) ||
+      (n == 3 && !read_number (parts[2], JR_PIN_MAX_TRIES, &pin_failed)))
+    return FALSE;
+  *out = (JrLockout){ (int) failed, until, (int) pin_failed };
   return TRUE;
 }
