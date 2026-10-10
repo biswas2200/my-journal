@@ -29,9 +29,11 @@ jobs:
             libsqlite3-dev libsodium-dev mutter dbus dbus-daemon valgrind
 
       - name: Build (all warnings are errors)
+        shell: bash
         run: |
-          meson setup build
-          meson compile -C build
+          set -o pipefail
+          meson setup build 2>&1 | tee build-setup.log
+          meson compile -C build 2>&1 | tee build.log
 
       - name: Tests with coverage (UI tests on a private headless display)
         run: tools/coverage.sh
@@ -44,9 +46,13 @@ jobs:
       - name: Static analyzer (GCC -fanalyzer)
         run: tools/analyze.sh
 
-      - name: Report failing tests
+      - name: Report failures
         if: failure()
+        shell: bash
         run: |
+          # Annotations are readable without signing in, unlike job logs.
+          grep -hE 'error:|ERROR|Dependency .* found: NO|warning:' build-setup.log build.log 2>/dev/null \
+            | head -25 | sed 's/^/::error::/' || true
           for log in build*/meson-logs/testlog.txt; do
             [ -f "$log" ] && grep -hE '^not ok|ERROR:' "$log" | head -20 | sed 's/^/::error::/' || true
           done
@@ -68,9 +74,11 @@ jobs:
             libsqlite3-dev libsodium-dev mutter dbus dbus-daemon
 
       - name: Build with AddressSanitizer + UndefinedBehaviorSanitizer
+        shell: bash
         run: |
-          meson setup build-asan -Db_sanitize=address,undefined -Dbuildtype=debug
-          meson compile -C build-asan
+          set -o pipefail
+          meson setup build-asan -Db_sanitize=address,undefined -Dbuildtype=debug 2>&1 | tee build-setup.log
+          meson compile -C build-asan 2>&1 | tee build.log
 
       - name: Core tests (leak detection on)
         run: meson test -C build-asan --suite core --print-errorlogs
@@ -78,6 +86,10 @@ jobs:
       - name: UI tests (GTK keeps global caches, so leak detection off)
         run: ASAN_OPTIONS=detect_leaks=0 meson test -C build-asan --suite ui --print-errorlogs
 
-      - name: Report failing tests
+      - name: Report failures
         if: failure()
-        run: grep -hE '^not ok|ERROR:' build-asan/meson-logs/testlog.txt | head -20 | sed 's/^/::error::/' || true
+        shell: bash
+        run: |
+          grep -hE 'error:|ERROR|Dependency .* found: NO|warning:' build-setup.log build.log 2>/dev/null \
+            | head -25 | sed 's/^/::error::/' || true
+          grep -hE '^not ok|ERROR:' build-asan/meson-logs/testlog.txt 2>/dev/null | head -20 | sed 's/^/::error::/' || true
