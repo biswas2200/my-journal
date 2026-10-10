@@ -81,6 +81,11 @@ install_data('data/io.github.biswas2200.Journal.desktop',
   install_dir : get_option('datadir') / 'applications')
 install_data('data/icons/hicolor/scalable/apps/io.github.biswas2200.Journal.svg',
   install_dir : get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps')
-gnome.post_install(gtk_update_icon_cache : true, update_desktop_database : true)
+# Refresh the icon and app-menu caches after install when the tools exist;
+# they are not needed to build or test.
+gnome.post_install(
+  gtk_update_icon_cache : find_program('gtk4-update-icon-cache', required : false).found(),
+  update_desktop_database : find_program('update-desktop-database', required : false).found(),
+)
 
 subdir('tests')
