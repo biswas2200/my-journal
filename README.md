@@ -18,9 +18,10 @@ no accounts, no telemetry, no sync.
    days written, total time, average per day, entries, and the last 7
    days as a bar chart. Minutes count only while typing and pause after
    60 seconds idle. An empty day is just empty: no streaks, no "missed".
-4. **PIN lock.** Optional 6-digit PIN. It locks when the app closes and
-   when the laptop sleeps or the lid closes. After 5 wrong PINs it waits
-   30 seconds, and a restart does not reset that wait.
+4. **Lock.** Optional 6-digit PIN or, stronger, a passphrase (12 or more
+   characters). It locks when the app closes and when the laptop sleeps
+   or the lid closes. After 5 wrong tries it waits 30 seconds, and a
+   restart does not reset that wait.
 5. **Dark, monochrome theme** that uses only system fonts.
 
 ## Build and install
@@ -48,39 +49,61 @@ scratch file without touching the real one.
 | --- | --- |
 | `Ctrl+K` | Open the day dropdown |
 | `Ctrl+Enter` | New stamped block (always on today's page) |
-| `Ctrl+L` | Lock now (opens Lock & security if no PIN is set) |
-| `Esc` | Close the dropdown or a PIN dialog |
+| `Ctrl+L` | Lock now (opens Lock & security if no lock is set) |
+| `Esc` | Close the dropdown or a PIN/passphrase dialog |
 | `Ctrl+Q` | Quit (saves, then wipes the key and text from memory) |
 
 On the lock screen, type the six digits; it unlocks on the sixth.
-`Backspace` removes a digit and `Esc` clears them.
+`Backspace` removes a digit and `Esc` clears them. With a passphrase,
+type it and press Enter.
 
 ## Security model (Option B: encrypt at rest)
 
 - A random 32-byte **data key** encrypts each entry body with libsodium
   `secretbox` (XSalsa20-Poly1305). Dates, stamp times and minutes are not
   secret and stay readable, so the Activity screen never decrypts text.
-- With a PIN set, the data key is never stored in the clear. It is stored
-  twice, wrapped with keys derived by **Argon2id** (8 passes, 64 MiB,
-  random salt): once from the PIN, once from the **recovery key**. A
-  wrong PIN fails authentication, so the wrapped key also serves as the
-  salted Argon2id PIN check (no separate `crypto_pwhash_str` hash is
-  needed, and the PIN itself is never stored).
+- With a lock set, the data key is never stored in the clear. It is
+  stored twice, wrapped with keys derived by **Argon2id** (10 passes,
+  256 MiB, random salt): once from the PIN or passphrase, once from the
+  **recovery key**. A wrong secret fails authentication, so the wrapped
+  key also serves as the salted Argon2id check. The PIN or passphrase
+  itself is never stored, not even hashed. Keys saved with an older,
+  weaker setting are re-saved with the current one the next time they
+  unlock.
+- **PIN or passphrase.** A 6-digit PIN has a million values; with each
+  guess costing ~0.9 s and 256 MiB, someone with a copy of the file could
+  still try them all in about a day on a 12-core laptop. A passphrase of
+  12+ characters (a few random words) has far too many possibilities for
+  that. Passphrases are Unicode-normalized, so the same words typed with
+  a different keyboard layout or input method still match.
 - The **recovery key** (`XXXX-XXXX-XXXX-XXXX-XXXX-XXXX`, 120 random bits)
-  is shown once when the PIN is set, or when you ask for a new one. It
-  unlocks in place of the PIN. If you lose both, the entries cannot be
-  read by anyone, including you.
-- Changing or turning off the PIN, or making a new recovery key, asks for
-  the current PIN first.
-- Without a PIN the data key is stored next to the data. That only keeps
+  is shown once when the lock is set, or when you ask for a new one. It
+  cannot be copied or selected, so it never reaches the clipboard: write
+  it down. It unlocks in place of the PIN or passphrase. If you lose both,
+  the entries cannot be read by anyone, including you.
+- Changing or turning off the lock, or making a new recovery key, asks
+  for the current PIN or passphrase first, and wrong ones count toward
+  the 5-try lockout. The slow work runs on a background thread on copies;
+  if the journal locks meanwhile (lid closed), nothing is applied.
+- Without a lock the data key is stored next to the data. That only keeps
   text out of casual view in tools like `strings`; it is not protection.
 - **Locking** (`Ctrl+L`, sleep or lid close, quit) saves, destroys every
   screen and text buffer, and zeroes the key (`sodium_free`). The window
   then shows only the lock screen. Before sleep, a logind "delay"
   inhibitor makes the system wait until the lock is done.
-- **Limits:** a 6-digit PIN has a million values. Argon2id makes each
-  guess cost about 0.2 s and 64 MiB, which stops casual access and file
-  browsing, not a determined attacker with the file and time.
+- **Process hardening.** At startup the app makes itself non-dumpable and
+  disables core dumps: a crash never writes entry text or keys to disk,
+  and other programs running as you cannot attach a debugger or read its
+  memory (`/proc/<pid>/mem`). The writing area tells input methods it is
+  private, so they do not learn or remember your words.
+- **No network.** The only outside contact is the local system bus, to
+  hear "about to sleep" from logind. No sockets, no telemetry, no logging
+  of entry text.
+- **What the app cannot protect against:** someone who already runs
+  programs as you (malware, a stolen login) can wait for you to unlock,
+  or swap the launcher for a fake one. An unencrypted disk or swap file
+  can hold copies of text that was in memory. Full-disk encryption and a
+  strong login password cover what an app cannot.
 
 ## Footprint (measured 6 Oct 2026, Ubuntu, GTK 4.22, x86-64)
 
@@ -91,7 +114,7 @@ On the lock screen, type the six digits; it unlocks on the sixth.
 | Startup CPU (to first frame) | ~0.27 s |
 | Idle CPU (cursor done blinking) | ~1 ms per second |
 | Memory growth, 25 tours of every screen + lock/unlock | ~17 KiB, then flat |
-| PIN check | ~0.17 s, 64 MiB held only during the check |
+| PIN/passphrase check | ~0.9 s on a worker thread, 256 MiB held only during the check |
 
 Most of the RSS is GTK and its libraries, shared with other GTK apps on
 the desktop. PSS (proportional share) and private memory are the fair
@@ -155,7 +178,8 @@ have `/ui/flow` save a PNG of each screen.
 Unit tests cover day boundaries and date parsing, the active-time
 counter (idle pause, 15 s flush, midnight split), calendar shading, the
 PIN lockout timer, SQLite storage, encryption and key wrapping, the
-recovery key, word counting, and the journal store (PIN, lockout
+recovery key, word counting, process hardening, and the journal store
+(PIN, passphrase, lock jobs, cost upgrade, lockout
 persisted across restarts). The manual checklist is in
 [TESTING.md](TESTING.md).
 
@@ -169,7 +193,8 @@ src/core/   plain C, no UI, fully unit tested
   lockout     5 tries then 30 s
   db          SQLite (only SQL here)
   vault       keys, Argon2id wrapping, entry encryption, recovery key
-  journal     the rules: locked/unlocked, PIN, lockout, encrypted entries
+  journal     the rules: locked/unlocked, PIN/passphrase, lock jobs, lockout
+  harden      non-dumpable process, no core dumps
   text        word count
 src/ui/     GTK4
   window      screens, ticker, shortcuts, locking
@@ -177,7 +202,7 @@ src/ui/     GTK4
   day_view    02 today / past days
   day_popover 03 day dropdown
   activity_view, bar_chart   04 activity and time
-  security_view, pin_dialog  05 lock and security
+  security_view, secret_dialog  05 lock and security
   sleep_watch logind PrepareForSleep
 data/       stylesheet, icons, .desktop file
 tests/      unit tests and the UI test

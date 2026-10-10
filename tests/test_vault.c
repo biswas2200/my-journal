@@ -142,6 +142,65 @@ test_two_recovery_keys_differ (void)
   jr_secret_free (b);
 }
 
+static void
+test_lock_secret_rules (void)
+{
+  char *s;
+  /* PIN: exactly six digits. */
+  s = jr_lock_secret_normalize (JR_LOCK_PIN, "123456");
+  g_assert_cmpstr (s, ==, "123456");
+  jr_secret_free (s);
+  g_assert_null (jr_lock_secret_normalize (JR_LOCK_PIN, "12345"));
+  g_assert_null (jr_lock_secret_normalize (JR_LOCK_PIN, "12345x"));
+  /* Passphrase: at least 12 characters, not just spaces, at most 256 bytes. */
+  s = jr_lock_secret_normalize (JR_LOCK_PASSPHRASE, "river lamp quiet oak");
+  g_assert_cmpstr (s, ==, "river lamp quiet oak");
+  jr_secret_free (s);
+  g_assert_null (jr_lock_secret_normalize (JR_LOCK_PASSPHRASE, "eleven char"));
+  g_assert_null (jr_lock_secret_normalize (JR_LOCK_PASSPHRASE, "              "));
+  g_assert_null (jr_lock_secret_normalize (JR_LOCK_PASSPHRASE, NULL));
+  char *huge = g_strnfill (257, 'a');
+  g_assert_null (jr_lock_secret_normalize (JR_LOCK_PASSPHRASE, huge));
+  g_free (huge);
+  /* Twelve characters, not twelve bytes: "é" counts once. */
+  s = jr_lock_secret_normalize (JR_LOCK_PASSPHRASE, "\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9"
+                                                    "\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9");
+  g_assert_nonnull (s);
+  jr_secret_free (s);
+  /* Unicode forms are unified (NFC). */
+  s = jr_lock_secret_normalize (JR_LOCK_PASSPHRASE, "cafe\xcc\x81 au lait matin");
+  g_assert_cmpstr (s, ==, "caf\xc3\xa9 au lait matin");
+  jr_secret_free (s);
+  g_assert_null (jr_lock_secret_normalize (JR_LOCK_PASSPHRASE, "bad utf8 \xff\xfe here"));
+}
+
+static void
+test_key_dup_and_cost (void)
+{
+  JrKey *k = jr_key_generate ();
+  JrKey *copy = jr_key_dup (k);
+  g_assert_true (jr_key_equal (k, copy));
+  jr_key_free (copy);
+
+  char *wrapped = jr_key_wrap (k, "123456", FAST);
+  JrKdfCost cost = { 0, 0 };
+  g_assert_true (jr_key_wrap_cost (wrapped, &cost));
+  g_assert_cmpuint (cost.ops, ==, FAST.ops);
+  g_assert_cmpuint (cost.mem, ==, FAST.mem);
+  g_assert_false (jr_key_wrap_cost ("nonsense", &cost));
+  g_assert_false (jr_key_wrap_cost (NULL, &cost));
+  g_free (wrapped);
+  jr_key_free (k);
+}
+
+static void
+test_default_cost_is_strong (void)
+{
+  /* Each guess of a PIN or passphrase must cost real time and memory. */
+  g_assert_cmpuint (JR_KDF_OPS_DEFAULT, >=, 10);
+  g_assert_cmpuint (JR_KDF_MEM_DEFAULT, >=, 256u * 1024u * 1024u);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -155,5 +214,8 @@ main (int argc, char **argv)
   g_test_add_func ("/vault/plain-export", test_plain_export);
   g_test_add_func ("/vault/recovery", test_recovery_key_format);
   g_test_add_func ("/vault/recovery-unique", test_two_recovery_keys_differ);
+  g_test_add_func ("/vault/lock-secret-rules", test_lock_secret_rules);
+  g_test_add_func ("/vault/key-dup-cost", test_key_dup_and_cost);
+  g_test_add_func ("/vault/default-cost", test_default_cost_is_strong);
   return g_test_run ();
 }

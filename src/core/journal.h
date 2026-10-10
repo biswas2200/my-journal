@@ -1,8 +1,8 @@
 /* journal: the app's single data object.
  *
  * Combines the database and the vault and enforces the rules: no entry
- * can be read or written until the journal is unlocked; wrong PINs feed a
- * persisted lockout; locking zeroes the key. Entry text exists in memory
+ * can be read or written until the journal is unlocked; wrong PINs or
+ * passphrases feed a persisted lockout; locking zeroes the key. Entry text exists in memory
  * only for the duration of a callback, then is wiped.
  */
 #pragma once
@@ -19,23 +19,29 @@ typedef enum {
   JR_UNLOCK_WAIT, /* lockout active, nothing was checked */
 } JrUnlockResult;
 
-/* Opens the file. Without a PIN it is unlocked at once (a key is created
- * on first run); with a PIN it starts locked and no entry is read. */
+/* Opens the file. Without a lock it is unlocked at once (a key is created
+ * on first run); with a PIN or passphrase it starts locked and no entry is
+ * read. */
 JrJournal     *jr_journal_open               (const char *path, GError **error);
 /* Zeroes the key and closes the file. NULL is fine. */
 void           jr_journal_close              (JrJournal *j);
 void           jr_journal_set_kdf_cost       (JrJournal *j, JrKdfCost cost);
 
-gboolean       jr_journal_pin_enabled        (JrJournal *j);
+/* TRUE when a PIN or passphrase is set. */
+gboolean       jr_journal_lock_enabled       (JrJournal *j);
+/* PIN or passphrase (not secret; readable while locked). */
+JrLockKind     jr_journal_lock_kind          (JrJournal *j);
 gboolean       jr_journal_is_unlocked        (JrJournal *j);
 
-/* Unlock in one call. Slow (Argon2id, ~0.5 s). */
-JrUnlockResult jr_journal_unlock_pin         (JrJournal *j, const char *pin, gint64 now);
+/* Unlock in one call with the PIN or passphrase. Slow (Argon2id, ~1 s). */
+JrUnlockResult jr_journal_unlock             (JrJournal *j, const char *secret, gint64 now);
 JrUnlockResult jr_journal_unlock_recovery    (JrJournal *j, const char *recovery, gint64 now);
 /* The same in three steps so the slow part can run on a worker thread:
  * begin and finish use the database (UI thread only); run touches nothing
- * but the attempt. begin returns NULL during a lockout (JR_UNLOCK_WAIT). */
-typedef enum { JR_SECRET_PIN, JR_SECRET_RECOVERY } JrSecretKind;
+ * but the attempt. begin returns NULL during a lockout (JR_UNLOCK_WAIT).
+ * A successful unlock also re-saves the key with the current Argon2id
+ * cost if it was saved with a weaker one. */
+typedef enum { JR_SECRET_LOCK, JR_SECRET_RECOVERY } JrSecretKind;
 typedef struct JrUnlockAttempt JrUnlockAttempt;
 JrUnlockAttempt *jr_journal_begin_unlock     (JrJournal *j, JrSecretKind kind,
                                               const char *secret, gint64 now);
@@ -47,15 +53,46 @@ void           jr_unlock_attempt_free        (JrUnlockAttempt *a);
 
 gint64         jr_journal_lockout_remaining  (JrJournal *j, gint64 now);
 int            jr_journal_tries_left         (JrJournal *j);
-/* Zeroes the key. No-op without a PIN (there is nothing to unlock with). */
+/* Zeroes the key. No-op without a lock (there is nothing to unlock with). */
 void           jr_journal_lock               (JrJournal *j);
 
-/* All need the journal unlocked. Returned recovery keys are shown once;
- * free them with jr_secret_free. */
-char          *jr_journal_enable_pin         (JrJournal *j, const char *pin);
-gboolean       jr_journal_change_pin         (JrJournal *j, const char *pin);
-char          *jr_journal_new_recovery_key   (JrJournal *j);
-gboolean       jr_journal_disable_pin        (JrJournal *j);
+/* Changing the lock, in the same three steps (the slow Argon2id work runs
+ * in jr_lock_job_run on private copies). All need the journal unlocked.
+ * Every job except ENABLE needs the current PIN or passphrase; a wrong one
+ * counts toward the lockout. A job finished after the journal was locked
+ * is not applied. Recovery keys are shown once; free with jr_secret_free. */
+typedef enum {
+  JR_JOB_ENABLE,       /* set a lock (new_kind, new_secret) */
+  JR_JOB_CHANGE,       /* replace it (current, new_kind, new_secret) */
+  JR_JOB_DISABLE,      /* remove it (current) */
+  JR_JOB_NEW_RECOVERY, /* replace the recovery key (current) */
+} JrLockJobKind;
+
+typedef enum {
+  JR_JOB_OK,
+  JR_JOB_WRONG,   /* current PIN or passphrase was wrong */
+  JR_JOB_WAIT,    /* lockout active, nothing was checked */
+  JR_JOB_INVALID, /* not allowed now, or the new secret is not valid */
+  JR_JOB_FAILED,  /* locked meanwhile, or could not save */
+} JrJobResult;
+
+typedef struct JrLockJob JrLockJob;
+/* Returns NULL with *result set when the job cannot start. */
+JrLockJob     *jr_journal_begin_lock_job     (JrJournal *j, JrLockJobKind what, const char *current,
+                                              JrLockKind new_kind, const char *new_secret,
+                                              gint64 now, JrJobResult *result);
+void           jr_lock_job_run               (JrLockJob *job);
+/* Applies the job and frees it. `recovery_out` may be NULL. */
+JrJobResult    jr_journal_finish_lock_job    (JrJournal *j, JrLockJob *job, char **recovery_out);
+void           jr_lock_job_free              (JrLockJob *job);
+
+/* One-call versions of the jobs. */
+char          *jr_journal_enable_lock        (JrJournal *j, JrLockKind kind, const char *secret);
+JrJobResult    jr_journal_change_lock        (JrJournal *j, const char *current, JrLockKind kind,
+                                              const char *secret, gint64 now);
+JrJobResult    jr_journal_disable_lock       (JrJournal *j, const char *current, gint64 now);
+char          *jr_journal_new_recovery_key   (JrJournal *j, const char *current, gint64 now,
+                                              JrJobResult *result);
 
 gboolean       jr_journal_lock_on_sleep      (JrJournal *j);
 void           jr_journal_set_lock_on_sleep  (JrJournal *j, gboolean on);

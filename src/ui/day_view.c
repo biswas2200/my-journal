@@ -274,8 +274,8 @@ add_block (JrDayView *self, gint64 id, gint64 stamped_at, const char *text)
   gtk_text_view_set_pixels_inside_wrap (GTK_TEXT_VIEW (b->text), 7);
   gtk_text_view_set_pixels_below_lines (GTK_TEXT_VIEW (b->text), 7);
   gtk_text_view_set_accepts_tab (GTK_TEXT_VIEW (b->text), FALSE);
-  gtk_text_view_set_input_hints (GTK_TEXT_VIEW (b->text), GTK_INPUT_HINT_SPELLCHECK |
-                                                          GTK_INPUT_HINT_WORD_COMPLETION);
+  /* Private: input methods must not learn or remember what is written here. */
+  gtk_text_view_set_input_hints (GTK_TEXT_VIEW (b->text), GTK_INPUT_HINT_PRIVATE);
   gtk_text_view_set_editable (GTK_TEXT_VIEW (b->text), self->editable);
   gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (b->text), self->editable);
   if (!self->editable)

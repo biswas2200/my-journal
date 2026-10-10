@@ -33,6 +33,12 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Sleep while writing saves before locking | `/ui/save-on-quit-and-sleep` |
 | Very long entry (1 MiB) saves fast; typing stays responsive | `/ui/long-entry`, `/journal/large-entry` |
 | No memory growth across screens and lock cycles | `/ui/no-growth` |
+| Passphrase: rules (12+ chars, NFC), unlock, wrong one refused, switch to/from PIN | `core/vault`, `/journal/passphrase*`, `/ui/passphrase` |
+| Every lock change needs the current secret; wrong ones count; a lock mid-change applies nothing | `/journal/lock-jobs`, `/journal/change-disable`, `/ui/passphrase` |
+| Old weaker keys re-saved at the current Argon2id cost on unlock | `/journal/upgrade-cost` |
+| Recovery key cannot be copied or selected | `/ui/flow` |
+| Writing area marked private for input methods | `/ui/flow` |
+| Real binary: non-dumpable, core dumps off, clean exit on SIGTERM | `hardened` |
 
 ## Manual checks
 
@@ -94,14 +100,24 @@ Known limit: a single paragraph of hundreds of kilobytes with no line
 breaks makes each keystroke slow (GTK re-wraps the whole paragraph).
 
 ### 7. Recovery key
-1. Set a PIN and write down the recovery key shown.
+1. Set a PIN or passphrase and write down the recovery key shown.
 2. Lock, choose "Forgot PIN? Use recovery key", and type the key in
    lower case without dashes.
 
-*It unlocks and opens Lock & security so a new PIN can be set. A wrong
-key counts toward the 5-try lockout.*
+*It unlocks and opens Lock & security so a new PIN or passphrase can be
+set. A wrong key counts toward the 5-try lockout. The key on screen
+cannot be selected or copied.*
 
-### 8. File stays private
+### 8. Passphrase
+1. Lock & security > **Use a passphrase instead**, enter the current PIN,
+   then a passphrase of 12+ characters twice. The dialog says "Working…"
+   for about a second while the window stays responsive.
+2. Lock (`Ctrl+L`), type the passphrase, press Enter.
+
+*The lock screen asks for a passphrase, wrong ones count toward the
+lockout, the right one unlocks.*
+
+### 9. File stays private
 ```bash
 ls -l ~/.local/share/journal/journal.db
 sqlite3 ~/.local/share/journal/journal.db 'select hex(substr(body,1,16)) from entries limit 3'

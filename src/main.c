@@ -4,6 +4,7 @@
  * everything to the window. */
 #include <glib-unix.h>
 #include <gtk/gtk.h>
+#include "harden.h"
 #include "journal.h"
 #include "window.h"
 
@@ -89,6 +90,10 @@ on_signal (gpointer app)
 int
 main (int argc, char **argv)
 {
+  /* Before anything holds a secret: no core dumps, no memory peeking. */
+  if (!jr_harden_process ())
+    g_printerr ("journal: could not disable core dumps\n");
+
   /* The software renderer uses far less memory than the GL/Vulkan ones
    * and is plenty for text. Set GSK_RENDERER to override. */
   g_setenv ("GSK_RENDERER", "cairo", FALSE);

@@ -16,7 +16,7 @@ struct _JrWindow {
   guint         tick_id;
   JrSleepWatch *sleep;
   JrDayView    *day_view; /* the current screen if it is a day, else NULL */
-  GtkWindow    *dialog;   /* weak */
+  GtkWindow    *dialog;   /* not owned; cleared when it is destroyed */
 };
 
 G_DEFINE_FINAL_TYPE (JrWindow, jr_window, GTK_TYPE_APPLICATION_WINDOW)
@@ -69,8 +69,18 @@ save_current (JrWindow *win)
 static void
 close_dialog (JrWindow *win)
 {
-  if (win->dialog != NULL)
-    gtk_window_destroy (win->dialog); /* the weak pointer clears itself */
+  GtkWindow *dialog = win->dialog;
+  win->dialog = NULL;
+  if (dialog != NULL)
+    gtk_window_destroy (dialog);
+}
+
+static void
+on_dialog_destroy (GtkWidget *dialog, gpointer data)
+{
+  JrWindow *win = data;
+  if (win->dialog == GTK_WINDOW (dialog))
+    win->dialog = NULL;
 }
 
 /* Replaces header and content. The old ones are destroyed. */
@@ -167,7 +177,7 @@ show_lock_screen (JrWindow *win, JrLockReason reason)
 void
 jr_window_lock (JrWindow *win, JrLockReason reason)
 {
-  if (!jr_journal_pin_enabled (win->journal))
+  if (!jr_journal_lock_enabled (win->journal))
     {
       /* Nothing to lock with yet: Ctrl+L leads to the PIN settings. */
       if (reason == JR_LOCK_MANUAL)
@@ -223,7 +233,7 @@ on_before_sleep (gpointer user)
 void
 jr_window_settings_changed (JrWindow *win)
 {
-  jr_sleep_watch_set_enabled (win->sleep, jr_journal_pin_enabled (win->journal) &&
+  jr_sleep_watch_set_enabled (win->sleep, jr_journal_lock_enabled (win->journal) &&
                                           jr_journal_lock_on_sleep (win->journal));
 }
 
@@ -232,7 +242,8 @@ jr_window_set_dialog (JrWindow *win, GtkWindow *dialog)
 {
   close_dialog (win);
   win->dialog = dialog;
-  g_object_add_weak_pointer (G_OBJECT (dialog), (gpointer *) &win->dialog);
+  /* Dialogs are destroyed with the window, so `win` outlives this handler. */
+  g_signal_connect (dialog, "destroy", G_CALLBACK (on_dialog_destroy), win);
 }
 
 /* Keyboard shortcuts. Capture phase, so they work while typing. */

@@ -19,9 +19,10 @@ struct _JrLockView {
   int        count;
   gboolean   busy;         /* a check is running */
   gboolean   recovery_mode;
+  gboolean   passphrase;   /* locked with a passphrase, not a PIN */
   guint      countdown_id;
   char       reason[96];
-  GtkWidget *dots, *message, *pin_box, *recovery_box, *recovery_entry, *mode_button, *hint;
+  GtkWidget *dots, *pass_entry, *message, *pin_box, *recovery_box, *recovery_entry, *mode_button, *hint;
 };
 
 G_DEFINE_FINAL_TYPE (JrLockView, jr_lock_view, GTK_TYPE_BOX)
@@ -110,7 +111,8 @@ on_verified (GObject *source, GAsyncResult *res, gpointer data)
           char text[96];
           int left = jr_journal_tries_left (journal);
           g_snprintf (text, sizeof text, "%s. %d %s left before a 30 second wait.",
-                      via_recovery ? "That key does not match" : "Wrong PIN",
+                      via_recovery ? "That key does not match"
+                                   : self->passphrase ? "Wrong passphrase" : "Wrong PIN",
                       left, left == 1 ? "try" : "tries");
           set_message (self, text);
         }
@@ -151,8 +153,8 @@ on_key (GtkEventControllerKey *c, guint keyval, guint keycode, GdkModifierType s
 {
   (void) c; (void) keycode;
   JrLockView *self = data;
-  if (self->recovery_mode || (state & (GDK_CONTROL_MASK | GDK_ALT_MASK)) != 0)
-    return FALSE;
+  if (self->recovery_mode || self->passphrase || (state & (GDK_CONTROL_MASK | GDK_ALT_MASK)) != 0)
+    return FALSE; /* text fields take their own keys */
 
   guint32 ch = gdk_keyval_to_unicode (keyval);
   gboolean is_digit = ch >= '0' && ch <= '9';
@@ -178,7 +180,7 @@ on_key (GtkEventControllerKey *c, guint keyval, guint keycode, GdkModifierType s
   jr_pin_dots_set (self->dots, self->count);
   if (self->count == JR_PIN_LEN)
     {
-      submit (self, JR_SECRET_PIN, self->digits);
+      submit (self, JR_SECRET_LOCK, self->digits);
       memset (self->digits, 0, sizeof self->digits);
       self->count = 0;
       /* Let the sixth dot show briefly, then clear while checking. */
@@ -198,6 +200,36 @@ on_recovery_activate (GtkEntry *entry, gpointer data)
 }
 
 static void
+on_passphrase_activate (GtkWidget *entry, gpointer data)
+{
+  JrLockView *self = data;
+  if (self->busy)
+    return;
+  submit (self, JR_SECRET_LOCK, gtk_editable_get_text (GTK_EDITABLE (entry)));
+  jr_wipe_editable (GTK_EDITABLE (entry));
+}
+
+static const char *
+unlock_hint (JrLockView *self)
+{
+  if (self->recovery_mode)
+    return "Type the recovery key you wrote down, then press Enter.";
+  return self->passphrase ? "Type your passphrase and press Enter."
+                          : "Type the digits on your keyboard. It unlocks by itself on the 6th.";
+}
+
+static void
+focus_input (JrLockView *self)
+{
+  if (self->recovery_mode)
+    gtk_widget_grab_focus (self->recovery_entry);
+  else if (self->passphrase)
+    gtk_widget_grab_focus (self->pass_entry);
+  else
+    gtk_widget_grab_focus (GTK_WIDGET (self));
+}
+
+static void
 set_recovery_mode (JrLockView *self, gboolean on)
 {
   self->recovery_mode = on;
@@ -205,17 +237,15 @@ set_recovery_mode (JrLockView *self, gboolean on)
   jr_wipe_editable (GTK_EDITABLE (self->recovery_entry));
   gtk_widget_set_visible (self->pin_box, !on);
   gtk_widget_set_visible (self->recovery_box, on);
+  jr_wipe_editable (GTK_EDITABLE (self->pass_entry));
   gtk_button_set_label (GTK_BUTTON (self->mode_button),
-                        on ? "Use PIN instead" : "Forgot PIN? Use recovery key");
-  gtk_label_set_text (GTK_LABEL (self->hint),
-                      on ? "Type the recovery key you saved when you set the PIN, then press Enter."
-                         : "Type the digits on your keyboard. It unlocks by itself on the 6th.");
+                        on ? (self->passphrase ? "Use passphrase instead" : "Use PIN instead")
+                           : (self->passphrase ? "Forgot it? Use recovery key"
+                                               : "Forgot PIN? Use recovery key"));
+  gtk_label_set_text (GTK_LABEL (self->hint), unlock_hint (self));
   if (!locked_out (self))
     set_message (self, self->reason);
-  if (on)
-    gtk_widget_grab_focus (self->recovery_entry);
-  else
-    gtk_widget_grab_focus (GTK_WIDGET (self));
+  focus_input (self);
 }
 
 static void
@@ -230,7 +260,7 @@ static void
 on_map (GtkWidget *widget, gpointer data)
 {
   (void) data;
-  gtk_widget_grab_focus (widget);
+  focus_input (JR_LOCK_VIEW (widget));
 }
 
 static void
@@ -241,7 +271,9 @@ jr_lock_view_dispose (GObject *object)
   memset (self->digits, 0, sizeof self->digits);
   if (self->recovery_entry != NULL)
     jr_wipe_editable (GTK_EDITABLE (self->recovery_entry));
-  self->recovery_entry = NULL;
+  if (self->pass_entry != NULL)
+    jr_wipe_editable (GTK_EDITABLE (self->pass_entry));
+  self->recovery_entry = self->pass_entry = NULL;
   self->win = NULL;
   G_OBJECT_CLASS (jr_lock_view_parent_class)->dispose (object);
 }
@@ -300,14 +332,27 @@ jr_lock_view_new (JrWindow *win, JrLockReason reason, gint64 locked_at, GtkWidge
   gtk_widget_set_margin_top (title, 18);
   gtk_box_append (GTK_BOX (center), title);
 
+  self->passphrase = jr_journal_lock_kind (jr_window_get_journal (win)) == JR_LOCK_PASSPHRASE;
   self->pin_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  GtkWidget *prompt = jr_label ("Enter your 6-digit PIN", "muted", "mono", NULL);
+  GtkWidget *prompt = jr_label (self->passphrase ? "Enter your passphrase" : "Enter your 6-digit PIN",
+                                "muted", "mono", NULL);
   gtk_label_set_xalign (GTK_LABEL (prompt), 0.5f);
   gtk_widget_set_margin_top (prompt, 8);
   gtk_box_append (GTK_BOX (self->pin_box), prompt);
   self->dots = jr_pin_dots_new ();
   gtk_widget_set_margin_top (self->dots, 26);
   gtk_box_append (GTK_BOX (self->pin_box), self->dots);
+  /* A passphrase is typed into a hidden field (input methods do not learn it). */
+  self->pass_entry = gtk_password_entry_new ();
+  gtk_password_entry_set_show_peek_icon (GTK_PASSWORD_ENTRY (self->pass_entry), TRUE);
+  gtk_widget_set_size_request (self->pass_entry, 340, -1);
+  gtk_widget_set_margin_top (self->pass_entry, 22);
+  gtk_accessible_update_property (GTK_ACCESSIBLE (self->pass_entry),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Passphrase", -1);
+  g_signal_connect (self->pass_entry, "activate", G_CALLBACK (on_passphrase_activate), self);
+  gtk_box_append (GTK_BOX (self->pin_box), self->pass_entry);
+  gtk_widget_set_visible (self->dots, !self->passphrase);
+  gtk_widget_set_visible (self->pass_entry, self->passphrase);
   gtk_box_append (GTK_BOX (center), self->pin_box);
 
   self->recovery_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
@@ -333,7 +378,8 @@ jr_lock_view_new (JrWindow *win, JrLockReason reason, gint64 locked_at, GtkWidge
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Lock status", -1);
   gtk_box_append (GTK_BOX (center), self->message);
 
-  self->mode_button = gtk_button_new_with_label ("Forgot PIN? Use recovery key");
+  self->mode_button = gtk_button_new_with_label (self->passphrase ? "Forgot it? Use recovery key"
+                                                                  : "Forgot PIN? Use recovery key");
   gtk_widget_add_css_class (self->mode_button, "link-button");
   gtk_widget_set_halign (self->mode_button, GTK_ALIGN_CENTER);
   gtk_widget_set_margin_top (self->mode_button, 14);
@@ -345,8 +391,7 @@ jr_lock_view_new (JrWindow *win, JrLockReason reason, gint64 locked_at, GtkWidge
 
   GtkWidget *status = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
   gtk_widget_add_css_class (status, "statusbar");
-  self->hint = jr_label ("Type the digits on your keyboard. It unlocks by itself on the 6th.",
-                         NULL, NULL);
+  self->hint = jr_label (unlock_hint (self), NULL, NULL);
   gtk_widget_set_hexpand (self->hint, TRUE);
   gtk_label_set_xalign (GTK_LABEL (self->hint), 0.5f);
   gtk_box_append (GTK_BOX (status), self->hint);

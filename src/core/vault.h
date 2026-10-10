@@ -2,10 +2,10 @@
  *
  * One random 32-byte data key encrypts every entry body with libsodium
  * secretbox (XSalsa20-Poly1305). The data key is never stored in the
- * clear while a PIN is set: it is "wrapped" (encrypted) twice, once with a
- * key derived from the PIN and once with a key derived from the recovery
- * key, both via Argon2id. A wrong PIN fails authentication, so the wrapped
- * key doubles as the salted Argon2id PIN check.
+ * clear while a lock is set: it is "wrapped" (encrypted) twice, once with
+ * a key derived from the PIN or passphrase and once with a key derived
+ * from the recovery key, both via Argon2id. A wrong secret fails
+ * authentication, so the wrapped key doubles as the salted Argon2id check.
  *
  * Key bytes live in sodium_malloc() memory (guarded, not swapped) and are
  * zeroed when freed.
@@ -21,25 +21,39 @@ typedef struct {
   gsize   mem; /* Argon2id memory in bytes */
 } JrKdfCost;
 
-/* Defaults: 8 passes over 64 MiB, about 0.2 s on a recent laptop. The
- * 64 MiB is only held during the check and freed right after. A 6-digit
- * PIN has a million values, so this cost is what slows offline guessing. */
-#define JR_KDF_OPS_DEFAULT 8
-#define JR_KDF_MEM_DEFAULT (64u * 1024u * 1024u)
+/* Defaults: 10 passes over 256 MiB, about 1 s on a recent laptop, on a
+ * worker thread. The 256 MiB is only held during the check and freed right
+ * after. A 6-digit PIN has a million values, so this cost is what slows
+ * offline guessing (a passphrase is the real fix). */
+#define JR_KDF_OPS_DEFAULT 10
+#define JR_KDF_MEM_DEFAULT (256u * 1024u * 1024u)
 /* libsodium minimums; only for tests. */
 #define JR_KDF_OPS_MIN 1
 #define JR_KDF_MEM_MIN 8192u
 
 #define JR_PIN_LEN 6
+#define JR_PASSPHRASE_MIN_CHARS 12
+#define JR_PASSPHRASE_MAX_BYTES 256
+
+/* What the journal is locked with. */
+typedef enum {
+  JR_LOCK_PIN,        /* exactly 6 digits */
+  JR_LOCK_PASSPHRASE, /* 12 or more characters */
+} JrLockKind;
 #define JR_RECOVERY_NORM_LEN 25 /* 24 symbols + NUL */
 
 gboolean jr_crypto_init        (void);
 
 gboolean jr_pin_valid          (const char *pin);
+/* Checks a PIN or passphrase and returns the form used for key derivation
+ * (passphrases are Unicode-normalized, NFC), or NULL if it is not allowed.
+ * Free with jr_secret_free. */
+char    *jr_lock_secret_normalize (JrLockKind kind, const char *secret);
 
 JrKey   *jr_key_generate       (void);
 void     jr_key_free           (JrKey *key);
 gboolean jr_key_equal          (const JrKey *a, const JrKey *b);
+JrKey   *jr_key_dup            (const JrKey *key);
 
 /* Base64 of the raw key, for when no PIN is set. Free with jr_secret_free. */
 char    *jr_key_export         (const JrKey *key);
@@ -49,6 +63,8 @@ JrKey   *jr_key_import         (const char *b64);
 char    *jr_key_wrap           (const JrKey *key, const char *secret, JrKdfCost cost);
 /* NULL if the secret is wrong or the string is malformed. */
 JrKey   *jr_key_unwrap         (const char *wrapped, const char *secret);
+/* The Argon2id cost a wrapped key was made with. */
+gboolean jr_key_wrap_cost      (const char *wrapped, JrKdfCost *out);
 
 /* nonce || ciphertext. Free with g_free. */
 guint8  *jr_seal               (const JrKey *key, const char *text, gsize len, gsize *out_len);

@@ -8,7 +8,7 @@ test_env.set('G_SLICE', 'always-malloc')
 
 isolated = find_program('run-isolated.sh')
 
-foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'journal', 'text']
+foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'journal', 'text', 'harden']
   exe = executable('test_' + name, 'test_' + name + '.c', dependencies : core_dep)
   # run-isolated.sh: test files live in a private TMPDIR removed afterwards.
   test(name, isolated, args : [exe], env : test_env, suite : 'core')
@@ -19,3 +19,8 @@ endforeach
 ui_test = executable('test_ui', 'test_ui.c', dependencies : ui_dep)
 test('ui', find_program('run-headless.sh'), args : [ui_test],
      env : test_env, suite : 'ui', timeout : 120)
+
+# The real program, started off-screen: memory protected, clean exit.
+test('hardened', find_program('run-headless.sh'),
+     args : [find_program('check-hardened.sh'), journal_exe],
+     suite : 'ui', timeout : 60)

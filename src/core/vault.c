@@ -12,8 +12,8 @@
 #define RECOVERY_SYMBOLS 24
 /* Upper bounds accepted from the file, so a tampered value cannot make
  * the app allocate gigabytes. */
-#define KDF_OPS_MAX 10
-#define KDF_MEM_MAX (512u * 1024u * 1024u)
+#define KDF_OPS_MAX 32
+#define KDF_MEM_MAX (1024u * 1024u * 1024u)
 
 static const char CROCKFORD[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -38,6 +38,46 @@ jr_pin_valid (const char *pin)
   return TRUE;
 }
 
+static gboolean
+is_ascii (const char *s)
+{
+  for (; *s != '\0'; s++)
+    if ((guchar) *s >= 0x80)
+      return FALSE;
+  return TRUE;
+}
+
+char *
+jr_lock_secret_normalize (JrLockKind kind, const char *secret)
+{
+  if (secret == NULL)
+    return NULL;
+  if (kind == JR_LOCK_PIN)
+    return jr_pin_valid (secret) ? g_strdup (secret) : NULL;
+
+  gsize len = strlen (secret);
+  if (len > JR_PASSPHRASE_MAX_BYTES || !g_utf8_validate (secret, (gssize) len, NULL))
+    return NULL;
+  /* The same words typed with a different input method must still match:
+   * "é" may arrive as one character or as "e" plus an accent. */
+  char *norm = is_ascii (secret) ? g_strdup (secret)
+                                 : g_utf8_normalize (secret, (gssize) len, G_NORMALIZE_NFC);
+  if (norm == NULL)
+    return NULL;
+
+  gboolean has_text = FALSE;
+  for (const char *p = norm; *p != '\0'; p = g_utf8_next_char (p))
+    if (!g_unichar_isspace (g_utf8_get_char (p)))
+      has_text = TRUE;
+  if (!has_text || strlen (norm) > JR_PASSPHRASE_MAX_BYTES ||
+      g_utf8_strlen (norm, -1) < JR_PASSPHRASE_MIN_CHARS)
+    {
+      jr_secret_free (norm);
+      return NULL;
+    }
+  return norm;
+}
+
 static JrKey *
 key_alloc (void)
 {
@@ -56,6 +96,15 @@ jr_key_generate (void)
   if (key != NULL)
     randombytes_buf (key->bytes, KEY_LEN);
   return key;
+}
+
+JrKey *
+jr_key_dup (const JrKey *key)
+{
+  JrKey *copy = key_alloc ();
+  if (copy != NULL)
+    memcpy (copy->bytes, key->bytes, KEY_LEN);
+  return copy;
 }
 
 void
@@ -155,6 +204,38 @@ jr_key_wrap (const JrKey *key, const char *secret, JrKdfCost cost)
                           cost.ops, cost.mem, s64, n64, b64);
 }
 
+/* Splits "v1$ops$mem$salt$nonce$box" and checks the cost is sane.
+ * Returns the parts (g_strfreev) or NULL. */
+static char **
+parse_wrapped (const char *wrapped, JrKdfCost *cost)
+{
+  if (wrapped == NULL)
+    return NULL;
+  char **parts = g_strsplit (wrapped, "$", 0);
+  if (g_strv_length (parts) != 6 || strcmp (parts[0], "v1") != 0)
+    {
+      g_strfreev (parts);
+      return NULL;
+    }
+  cost->ops = g_ascii_strtoull (parts[1], NULL, 10);
+  cost->mem = (gsize) g_ascii_strtoull (parts[2], NULL, 10);
+  if (cost->ops < JR_KDF_OPS_MIN || cost->ops > KDF_OPS_MAX ||
+      cost->mem < JR_KDF_MEM_MIN || cost->mem > KDF_MEM_MAX)
+    {
+      g_strfreev (parts);
+      return NULL;
+    }
+  return parts;
+}
+
+gboolean
+jr_key_wrap_cost (const char *wrapped, JrKdfCost *out)
+{
+  char **parts = parse_wrapped (wrapped, out);
+  g_strfreev (parts);
+  return parts != NULL;
+}
+
 JrKey *
 jr_key_unwrap (const char *wrapped, const char *secret)
 {
@@ -163,17 +244,10 @@ jr_key_unwrap (const char *wrapped, const char *secret)
 
   JrKey *result = NULL;
   guint8 *salt = NULL, *nonce = NULL, *box = NULL;
-  char **parts = g_strsplit (wrapped, "$", 0);
-  if (g_strv_length (parts) != 6 || strcmp (parts[0], "v1") != 0)
-    goto out;
-
-  JrKdfCost cost = {
-    g_ascii_strtoull (parts[1], NULL, 10),
-    (gsize) g_ascii_strtoull (parts[2], NULL, 10),
-  };
-  if (cost.ops < JR_KDF_OPS_MIN || cost.ops > KDF_OPS_MAX ||
-      cost.mem < JR_KDF_MEM_MIN || cost.mem > KDF_MEM_MAX)
-    goto out;
+  JrKdfCost cost;
+  char **parts = parse_wrapped (wrapped, &cost);
+  if (parts == NULL)
+    return NULL;
 
   salt = decode_exact (parts[3], SALT_LEN);
   nonce = decode_exact (parts[4], NONCE_LEN);

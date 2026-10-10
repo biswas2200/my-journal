@@ -33,6 +33,7 @@ core_src = files(
   'src/core/vault.c',
   'src/core/journal.c',
   'src/core/text.c',
+  'src/core/harden.c',
 )
 core_deps = [glib_dep, sqlite_dep, sodium_dep]
 core_lib = static_library('journal-core', core_src, dependencies : core_deps)
@@ -58,7 +59,7 @@ ui_src = files(
   'src/ui/activity_view.c',
   'src/ui/bar_chart.c',
   'src/ui/security_view.c',
-  'src/ui/pin_dialog.c',
+  'src/ui/secret_dialog.c',
   'src/ui/sleep_watch.c',
   'src/ui/widgets.c',
 )
@@ -71,7 +72,7 @@ ui_dep = declare_dependency(
   include_directories : include_directories('src/ui'),
   dependencies : [core_dep, gtk_dep],
 )
-executable('journal', 'src/main.c',
+journal_exe = executable('journal', 'src/main.c',
   dependencies : ui_dep,
   install : true,
 )

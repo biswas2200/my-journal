@@ -9,7 +9,7 @@
 #include <gtk/gtk.h>
 #include "day_view.h"
 #include "journal.h"
-#include "pin_dialog.h"
+#include "secret_dialog.h"
 #include "window.h"
 
 #if defined(__SANITIZE_ADDRESS__)
@@ -95,6 +95,100 @@ find_type (GtkWidget *root, GType type)
         return found;
     }
   return NULL;
+}
+
+static GtkWindow *
+find_toplevel (const char *title)
+{
+  GtkWindow *found = NULL;
+  GList *all = gtk_window_list_toplevels ();
+  for (GList *l = all; l != NULL; l = l->next)
+    if (gtk_widget_get_visible (l->data) && g_strcmp0 (gtk_window_get_title (l->data), title) == 0)
+      found = l->data;
+  g_list_free (all);
+  return found;
+}
+
+static GtkWidget *
+find_button (GtkWidget *root, const char *label)
+{
+  if (root == NULL)
+    return NULL;
+  if (GTK_IS_BUTTON (root) && g_strcmp0 (gtk_button_get_label (GTK_BUTTON (root)), label) == 0)
+    return root;
+  for (GtkWidget *c = gtk_widget_get_first_child (root); c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      GtkWidget *found = find_button (c, label);
+      if (found != NULL)
+        return found;
+    }
+  return NULL;
+}
+
+static GtkWidget *
+find_label (GtkWidget *root, const char *text)
+{
+  if (root == NULL)
+    return NULL;
+  if (GTK_IS_LABEL (root) && g_strcmp0 (gtk_label_get_text (GTK_LABEL (root)), text) == 0)
+    return root;
+  for (GtkWidget *c = gtk_widget_get_first_child (root); c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      GtkWidget *found = find_label (c, text);
+      if (found != NULL)
+        return found;
+    }
+  return NULL;
+}
+
+/* A visible label under root whose text contains `part`. */
+static gboolean
+has_label_containing (GtkWidget *root, const char *part)
+{
+  if (root == NULL)
+    return FALSE;
+  if (GTK_IS_LABEL (root) && gtk_widget_get_visible (root) &&
+      strstr (gtk_label_get_text (GTK_LABEL (root)), part) != NULL)
+    return TRUE;
+  for (GtkWidget *c = gtk_widget_get_first_child (root); c != NULL; c = gtk_widget_get_next_sibling (c))
+    if (has_label_containing (c, part))
+      return TRUE;
+  return FALSE;
+}
+
+/* The first visible password field under root. */
+static GtkWidget *
+find_password (GtkWidget *root)
+{
+  if (root == NULL)
+    return NULL;
+  if (GTK_IS_PASSWORD_ENTRY (root) && gtk_widget_get_visible (root))
+    return root;
+  for (GtkWidget *c = gtk_widget_get_first_child (root); c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      GtkWidget *found = find_password (c);
+      if (found != NULL)
+        return found;
+    }
+  return NULL;
+}
+
+/* Types `text` into a password field and presses Enter. */
+static void
+enter_text (GtkWidget *entry, const char *text)
+{
+  g_assert_nonnull (entry);
+  gtk_editable_set_text (GTK_EDITABLE (entry), text);
+  g_signal_emit_by_name (entry, "activate");
+}
+
+/* Pumps until `part` shows in a label under root, or `ms` pass. */
+static gboolean
+wait_for_label (GtkWidget *root, const char *part, int ms)
+{
+  for (int waited = 0; !has_label_containing (root, part) && waited < ms; waited += 20)
+    pump (20);
+  return has_label_containing (root, part);
 }
 
 /* All text of every GtkTextView under root, joined. */
@@ -245,18 +339,32 @@ test_ui_flow (void)
   jr_window_show_security (win);
   pump (300);
   shot (GTK_WIDGET (win), "05-security-off");
-  char *recovery = jr_journal_enable_pin (j, "123456");
+  jr_lock_kind_dialog_show (win, NULL); /* not clicked: only looked at */
+  pump (300);
+  shot (GTK_WIDGET (find_toplevel ("Lock the journal")), "05e-choose-kind");
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456");
   jr_window_settings_changed (win);
   jr_window_show_security (win);
   pump (300);
   shot (GTK_WIDGET (win), "05-security-on");
 
-  static const char *const prompts[] = { "Choose a 6-digit PIN", "Type the same PIN again", NULL };
-  GtkWindow *pd = jr_pin_dialog_new (win, "Set a PIN", prompts, NULL, NULL);
+  static const JrSecretStep steps[] = {
+    { "Choose a 6-digit PIN", JR_LOCK_PIN, TRUE },
+    { "Type the same PIN again", JR_LOCK_PIN, TRUE },
+  };
+  GtkWindow *pd = jr_secret_dialog_new (win, "Set a PIN", steps, 2, NULL, NULL);
   pump (300);
   shot (GTK_WIDGET (pd), "05b-pin-dialog");
   jr_recovery_dialog_show (win, recovery); /* replaces the PIN dialog */
   pump (300);
+  /* The recovery key can be read, but not copied or selected. */
+  GtkWindow *rd = find_toplevel ("Recovery key");
+  g_assert_nonnull (rd);
+  g_assert_null (find_button (GTK_WIDGET (rd), "Copy"));
+  GtkWidget *key_label = find_label (GTK_WIDGET (rd), recovery);
+  g_assert_nonnull (key_label);
+  g_assert_false (gtk_label_get_selectable (GTK_LABEL (key_label)));
+  shot (GTK_WIDGET (rd), "05c-recovery");
 
   /* 01 Lock: back to today first so there is text on screen to clear. */
   jr_window_show_today (win);
@@ -273,7 +381,7 @@ test_ui_flow (void)
   shot (GTK_WIDGET (win), "01-lock");
 
   /* Unlock: the saved text comes back. */
-  g_assert_cmpint (jr_journal_unlock_pin (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
+  g_assert_cmpint (jr_journal_unlock (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
   jr_window_unlocked (win, FALSE);
   pump (300);
   text = g_string_new (NULL);
@@ -283,6 +391,8 @@ test_ui_flow (void)
   /* Loading text is not an undoable edit: Ctrl+Z must not erase an entry. */
   GtkWidget *loaded = find_type (gtk_window_get_child (GTK_WINDOW (win)), GTK_TYPE_TEXT_VIEW);
   g_assert_false (gtk_text_buffer_get_can_undo (gtk_text_view_get_buffer (GTK_TEXT_VIEW (loaded))));
+  /* Input methods are told not to learn or remember journal text. */
+  g_assert_true (gtk_text_view_get_input_hints (GTK_TEXT_VIEW (loaded)) & GTK_INPUT_HINT_PRIVATE);
   /* Regression: loaded text wraps to its full height, not one line. */
   GtkWidget *first = find_type (gtk_window_get_child (GTK_WINDOW (win)), GTK_TYPE_TEXT_VIEW);
   int frames = 0;
@@ -344,7 +454,7 @@ tour (JrWindow *win, JrJournal *j)
     {
       jr_window_lock (win, JR_LOCK_MANUAL);
       pump (30);
-      g_assert_cmpint (jr_journal_unlock_pin (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
+      g_assert_cmpint (jr_journal_unlock (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
       jr_window_unlocked (win, FALSE);
       pump (30);
     }
@@ -368,7 +478,9 @@ test_ui_no_growth (void)
       g_test_skip ("no display");
       return;
     }
-  if ((g_getenv ("ASAN_OPTIONS") != NULL || RUNNING_ON_SANITIZER) && g_getenv ("JR_TOURS") == NULL)
+  /* Only a sanitizer build skips (meson sets ASAN_OPTIONS for every test,
+   * so the environment says nothing). */
+  if (RUNNING_ON_SANITIZER && g_getenv ("JR_TOURS") == NULL)
     {
       g_test_skip ("heap numbers are not meaningful under a sanitizer");
       return;
@@ -383,10 +495,10 @@ test_ui_no_growth (void)
   JrJournal *j = jr_journal_open (path, NULL);
   jr_journal_set_kdf_cost (j, FAST);
   seed (j);
-  char *recovery = jr_journal_enable_pin (j, "123456");
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456");
   jr_secret_free (recovery);
   jr_journal_lock (j);
-  jr_journal_unlock_pin (j, "123456", jr_now ());
+  jr_journal_unlock (j, "123456", jr_now ());
 
   JrWindow *win = jr_window_new (NULL, j);
   gtk_window_present (GTK_WINDOW (win));
@@ -463,14 +575,14 @@ test_ui_saves_on_quit_and_sleep (void)
   g_assert_true (saved_today (j, "typed just before quitting"));
 
   /* Lid close (sleep) while writing. */
-  char *recovery = jr_journal_enable_pin (j, "123456");
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456");
   win = jr_window_new (NULL, j);
   gtk_window_present (GTK_WINDOW (win));
   pump (300);
   type_text (win, " and before the lid closed");
   jr_window_lock (win, JR_LOCK_SLEEP);
   g_assert_false (jr_journal_is_unlocked (j));
-  g_assert_cmpint (jr_journal_unlock_pin (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
+  g_assert_cmpint (jr_journal_unlock (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
   g_assert_true (saved_today (j, "and before the lid closed"));
   gtk_window_close (GTK_WINDOW (win));
   pump (100);
@@ -527,6 +639,88 @@ test_ui_long_entry (void)
   g_rmdir (dir);
 }
 
+static gboolean
+dialog_gone (const char *title, int ms)
+{
+  for (int waited = 0; find_toplevel (title) != NULL && waited < ms; waited += 20)
+    pump (20);
+  return find_toplevel (title) == NULL;
+}
+
+/* Passphrase on the lock screen, then changed through Lock & security
+ * (the Argon2id work runs on a worker thread while the dialog waits). */
+static void
+test_ui_passphrase (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+  JrJournal *j = jr_journal_open (path, NULL);
+  jr_journal_set_kdf_cost (j, FAST);
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PASSPHRASE, "correct horse battery staple");
+  g_assert_nonnull (recovery);
+
+  JrWindow *win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (200);
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  pump (200);
+  GtkWidget *content = gtk_window_get_child (GTK_WINDOW (win));
+  g_assert_true (has_label_containing (content, "Enter your passphrase"));
+  shot (GTK_WIDGET (win), "01b-lock-passphrase");
+
+  /* Wrong passphrase: refused, field wiped, a try counted. */
+  GtkWidget *entry = find_password (content);
+  enter_text (entry, "wrong horse battery staple");
+  g_assert_cmpstr (gtk_editable_get_text (GTK_EDITABLE (entry)), ==, "");
+  g_assert_true (wait_for_label (content, "Wrong passphrase", 3000));
+  g_assert_false (jr_journal_is_unlocked (j));
+
+  /* Right one: unlocks to today's page. */
+  enter_text (find_password (content), "correct horse battery staple");
+  for (int waited = 0; jr_window_get_day_view (win) == NULL && waited < 3000; waited += 20)
+    pump (20);
+  g_assert_true (jr_journal_is_unlocked (j));
+  g_assert_nonnull (jr_window_get_day_view (win));
+
+  /* Change it in Lock & security. A wrong current passphrase is refused. */
+  jr_window_show_security (win);
+  pump (200);
+  content = gtk_window_get_child (GTK_WINDOW (win));
+  shot (GTK_WIDGET (win), "05d-security-passphrase");
+  g_signal_emit_by_name (find_button (content, "Change passphrase"), "clicked");
+  pump (200);
+  GtkWindow *dlg = find_toplevel ("Change passphrase");
+  g_assert_nonnull (dlg);
+  shot (GTK_WIDGET (dlg), "05f-change-passphrase");
+  enter_text (find_password (GTK_WIDGET (dlg)), "not my passphrase at all");
+  enter_text (find_password (GTK_WIDGET (dlg)), "a brand new passphrase here");
+  enter_text (find_password (GTK_WIDGET (dlg)), "a brand new passphrase here");
+  g_assert_true (wait_for_label (GTK_WIDGET (dlg), "Wrong passphrase", 3000));
+
+  /* Too short a new passphrase is refused at that step. */
+  enter_text (find_password (GTK_WIDGET (dlg)), "correct horse battery staple");
+  enter_text (find_password (GTK_WIDGET (dlg)), "too short");
+  g_assert_true (has_label_containing (GTK_WIDGET (dlg), "at least 12 characters"));
+  enter_text (find_password (GTK_WIDGET (dlg)), "a brand new passphrase here");
+  enter_text (find_password (GTK_WIDGET (dlg)), "a brand new passphrase here");
+  g_assert_true (dialog_gone ("Change passphrase", 3000));
+
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  g_assert_cmpint (jr_journal_unlock (j, "correct horse battery staple", jr_now ()), ==, JR_UNLOCK_WRONG);
+  g_assert_cmpint (jr_journal_unlock (j, "a brand new passphrase here", jr_now ()), ==, JR_UNLOCK_OK);
+
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+  jr_secret_free (recovery);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -537,5 +731,6 @@ main (int argc, char **argv)
   g_test_add_func ("/ui/no-growth", test_ui_no_growth);
   g_test_add_func ("/ui/save-on-quit-and-sleep", test_ui_saves_on_quit_and_sleep);
   g_test_add_func ("/ui/long-entry", test_ui_long_entry);
+  g_test_add_func ("/ui/passphrase", test_ui_passphrase);
   return g_test_run ();
 }
