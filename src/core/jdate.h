@@ -33,7 +33,9 @@ int         jr_day_weekday      (JrDay d);              /* 1 = Monday .. 7 = Sun
 
 /* Parses what the user types in "Jump to a date": "4 Oct", "Oct 4",
  * "4 October 2025", "2026-10-04", "today", "yesterday". A date without a
- * year that would be in the future means last year. Future dates fail. */
+ * year that is still to come this year, or does not exist this year
+ * (29 Feb), means last year. Future dates fail, and so does text over 63
+ * characters once trimmed. */
 gboolean    jr_day_parse_input  (const char *text, JrDay today, JrDay *out);
 
 void        jr_day_format_long  (JrDay d, char *buf, gsize len); /* "Tue 6 Oct 2026" */

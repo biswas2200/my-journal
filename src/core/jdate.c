@@ -158,9 +158,18 @@ jr_day_parse_input (const char *text, JrDay today, JrDay *out)
   if (text == NULL)
     return FALSE;
 
+  /* Trim, then copy. Text longer than any date is refused, never cut
+   * short: a cut could turn "4 Oct <many spaces> 2025" into "4 Oct". */
+  while (g_ascii_isspace (*text))
+    text++;
+  gsize len = strlen (text);
+  while (len > 0 && g_ascii_isspace (text[len - 1]))
+    len--;
   char buf[64];
-  g_strlcpy (buf, text, sizeof buf);
-  g_strstrip (buf);
+  if (len >= sizeof buf)
+    return FALSE;
+  memcpy (buf, text, len);
+  buf[len] = '\0';
 
   JrDay d = { 0, 0, 0 };
   gboolean have_year = FALSE;
@@ -210,15 +219,12 @@ jr_day_parse_input (const char *text, JrDay today, JrDay *out)
         }
     }
 
-  if (!jr_day_valid (d))
-    return FALSE;
-  if (!have_year && jr_day_compare (d, today) > 0)
-    {
-      d.year--;
-      if (!jr_day_valid (d)) /* 29 Feb into a non-leap year */
-        return FALSE;
-    }
-  if (jr_day_compare (d, today) > 0)
+  /* Without a year: this year's day, or last year's if this year's is
+   * still to come or does not exist (29 Feb typed in January 2029 means
+   * 29 Feb 2028). */
+  if (!have_year && (!jr_day_valid (d) || jr_day_compare (d, today) > 0))
+    d.year--;
+  if (!jr_day_valid (d) || jr_day_compare (d, today) > 0)
     return FALSE;
 
   *out = d;

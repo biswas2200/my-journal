@@ -15,8 +15,9 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 
 | Feature or rule | Test |
 | --- | --- |
-| Day boundary: 00:30 belongs to the new day; local timezone | `core/jdate` (`/jdate/midnight`, `/jdate/timezone`) |
-| Jump to a date: `4 Oct`, `2026-10-04`, no future days | `core/jdate` (`/jdate/parse*`) |
+| Day boundary: 00:30 belongs to the new day; local timezone, summer time | `core/jdate` (`/jdate/day-from-time`, `/jdate/hidden/day-from-time`) |
+| Jump to a date: `4 Oct`, `2026-10-04`, 29 Feb, no future days, long input | `core/jdate` (`/jdate/jump-to-date`, `/jdate/hidden/jump-to-date`, `/jdate/huge-input`) |
+| Calendar arithmetic, weekdays and date text, 0001-01-01 to 9999-12-31 | `core/jdate` (tables, plus `/jdate/hidden/every-day`) |
 | Active time: counts only with a keystroke in the last 60 s, flushes every 15 s, splits at midnight, stops on lock | `core/active_time` |
 | Calendar shading: none, 1-10, 11-20, 21+ minutes | `core/shade` |
 | PIN lockout: 5 tries then 30 s, ignores tries while waiting, survives restart | `core/lockout`, `/journal/lockout-persists` |
@@ -43,6 +44,40 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Crash during a PIN change: old or new PIN still opens it, recovery key still works | `crash` (`/crash/lock-change-survives-kill`) |
 | Lock screen keyboard: PIN on 6th digit, Backspace/Esc, recovery key, 5 wrong PINs then wait | `/ui/pin-lock-screen` |
 | Day dropdown: typed dates, refusing bad/future dates, month pages | `/ui/day-dropdown` |
+
+### LeetCode-style tests
+
+The core logic is tested the way LeetCode judges a solution
+([`tests/cases.h`](tests/cases.h)):
+
+- **Tables of cases.** Each test is a table of named cases (input and
+  expected output) with the input's constraints written above it: the
+  basic case, then the edge cases (empty, `NULL`, first and last day there
+  is, leap days, year ends, one past each limit, maximum length). Every
+  case runs, and each failure prints like a LeetCode verdict:
+
+  ```
+  jump-to-date: Case "29 Feb, early the next year": Input "29 Feb" (today 2029-01-15)  Expected 2028-02-29  Got invalid
+  jump-to-date: 50/51 cases passed
+  ```
+
+- **Hidden tests.** Thousands of generated inputs checked against a slow
+  reference that is obviously right (for dates: walking the calendar one
+  day at a time, and the C library's own calendar). They use GLib's test
+  random numbers, so a failure prints a seed and `--seed` replays it.
+
+- **Huge inputs.** Inputs far beyond any real use (100,000 characters)
+  must be refused or handled, never cut short and never crash.
+
+Run one test binary verbosely to see every table's score:
+
+```bash
+build/tests/test_jdate --verbose
+```
+
+| Module | Tables | Hidden cases |
+| --- | --- | --- |
+| `jdate` | 10 tables, 245 cases | every day 1900-2200 (773,177 checks), 40,000 random pairs, 24,000 moments in 6 time zones, 35,190 typed dates |
 
 ## Manual checks
 
