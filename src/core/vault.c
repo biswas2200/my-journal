@@ -175,9 +175,11 @@ jr_key_import (const char *b64)
   return key;
 }
 
-/* Argon2id: secret + salt -> key-encryption key. */
+/* Argon2id: secret + salt -> key-encryption key. With a device secret,
+ * the Argon2id output is then hashed with BLAKE2b keyed by it, so the
+ * key-encryption key depends on both. */
 static JrKey *
-derive (const char *secret, const guint8 *salt, JrKdfCost cost)
+derive (const char *secret, const guint8 *salt, JrKdfCost cost, const JrKey *device)
 {
   JrKey *kek = key_alloc ();
   if (kek == NULL)
@@ -188,17 +190,18 @@ derive (const char *secret, const guint8 *salt, JrKdfCost cost)
       jr_key_free (kek); /* out of memory */
       return NULL;
     }
+  if (device != NULL)
+    crypto_generichash (kek->bytes, KEY_LEN, kek->bytes, KEY_LEN, device->bytes, KEY_LEN);
   return kek;
 }
 
 char *
-jr_key_wrap (const JrKey *key, const char *secret, JrKdfCost cost)
+jr_key_wrap_for (const JrKey *key, const char *secret, const JrKey *device, JrKdfCost cost)
 {
   guint8 salt[SALT_LEN], nonce[NONCE_LEN], box[KEY_LEN + MAC_LEN];
   randombytes_buf (salt, sizeof salt);
   randombytes_buf (nonce, sizeof nonce);
-
-  JrKey *kek = derive (secret, salt, cost);
+  JrKey *kek = derive (secret, salt, cost, device);
   if (kek == NULL)
     return NULL;
   crypto_secretbox_easy (box, key->bytes, KEY_LEN, nonce, kek->bytes);
@@ -207,44 +210,66 @@ jr_key_wrap (const JrKey *key, const char *secret, JrKdfCost cost)
   g_autofree char *s64 = g_base64_encode (salt, sizeof salt);
   g_autofree char *n64 = g_base64_encode (nonce, sizeof nonce);
   g_autofree char *b64 = g_base64_encode (box, sizeof box);
-  return g_strdup_printf ("v1$%" G_GUINT64_FORMAT "$%" G_GSIZE_FORMAT "$%s$%s$%s",
-                          cost.ops, cost.mem, s64, n64, b64);
+  return g_strdup_printf ("%s$%" G_GUINT64_FORMAT "$%" G_GSIZE_FORMAT "$%s$%s$%s",
+                          device != NULL ? "d1" : "v1", cost.ops, cost.mem, s64, n64, b64);
 }
 
-/* Splits "v1$ops$mem$salt$nonce$box" and checks the cost is sane.
- * Returns the parts (g_strfreev) or NULL. */
+char *
+jr_key_wrap (const JrKey *key, const char *secret, JrKdfCost cost)
+{
+  return jr_key_wrap_for (key, secret, NULL, cost);
+}
+
+/* Plain decimal digits within [min, max]: no sign, spaces, junk or
+ * overflow. */
+static gboolean
+read_uint (const char *s, guint64 min, guint64 max, guint64 *out)
+{
+  return s != NULL && g_ascii_isdigit (*s) && g_ascii_string_to_unsigned (s, 10, min, max, out, NULL);
+}
+
+/* Splits "v1$ops$mem$salt$nonce$box" (or "d1$...") and checks the cost
+ * is sane. Returns the parts (g_strfreev) or NULL. */
 static char **
-parse_wrapped (const char *wrapped, JrKdfCost *cost)
+parse_wrapped (const char *wrapped, JrKdfCost *cost, gboolean *needs_device)
 {
   if (wrapped == NULL)
     return NULL;
   char **parts = g_strsplit (wrapped, "$", 0);
-  if (g_strv_length (parts) != 6 || strcmp (parts[0], "v1") != 0)
+  guint64 ops, mem;
+  if (g_strv_length (parts) != 6 || (strcmp (parts[0], "v1") != 0 && strcmp (parts[0], "d1") != 0) ||
+      !read_uint (parts[1], JR_KDF_OPS_MIN, KDF_OPS_MAX, &ops) ||
+      !read_uint (parts[2], JR_KDF_MEM_MIN, KDF_MEM_MAX, &mem))
     {
       g_strfreev (parts);
       return NULL;
     }
-  cost->ops = g_ascii_strtoull (parts[1], NULL, 10);
-  cost->mem = (gsize) g_ascii_strtoull (parts[2], NULL, 10);
-  if (cost->ops < JR_KDF_OPS_MIN || cost->ops > KDF_OPS_MAX ||
-      cost->mem < JR_KDF_MEM_MIN || cost->mem > KDF_MEM_MAX)
-    {
-      g_strfreev (parts);
-      return NULL;
-    }
+  *cost = (JrKdfCost){ ops, (gsize) mem };
+  *needs_device = parts[0][0] == 'd';
   return parts;
 }
 
 gboolean
 jr_key_wrap_cost (const char *wrapped, JrKdfCost *out)
 {
-  char **parts = parse_wrapped (wrapped, out);
+  gboolean needs_device;
+  char **parts = parse_wrapped (wrapped, out, &needs_device);
   g_strfreev (parts);
   return parts != NULL;
 }
 
+gboolean
+jr_key_wrap_needs_device (const char *wrapped)
+{
+  JrKdfCost cost;
+  gboolean needs_device = FALSE;
+  char **parts = parse_wrapped (wrapped, &cost, &needs_device);
+  g_strfreev (parts);
+  return parts != NULL && needs_device;
+}
+
 JrKey *
-jr_key_unwrap (const char *wrapped, const char *secret)
+jr_key_unwrap_for (const char *wrapped, const char *secret, const JrKey *device)
 {
   if (wrapped == NULL || secret == NULL)
     return NULL;
@@ -252,9 +277,12 @@ jr_key_unwrap (const char *wrapped, const char *secret)
   JrKey *result = NULL;
   guint8 *salt = NULL, *nonce = NULL, *box = NULL;
   JrKdfCost cost;
-  char **parts = parse_wrapped (wrapped, &cost);
+  gboolean needs_device;
+  char **parts = parse_wrapped (wrapped, &cost, &needs_device);
   if (parts == NULL)
     return NULL;
+  if (needs_device != (device != NULL))
+    goto out; /* never open a "d1" key without its device secret, or a "v1" key with one */
 
   salt = decode_exact (parts[3], SALT_LEN);
   nonce = decode_exact (parts[4], NONCE_LEN);
@@ -262,7 +290,7 @@ jr_key_unwrap (const char *wrapped, const char *secret)
   if (salt == NULL || nonce == NULL || box == NULL)
     goto out;
 
-  JrKey *kek = derive (secret, salt, cost);
+  JrKey *kek = derive (secret, salt, cost, device);
   if (kek == NULL)
     goto out;
   result = key_alloc ();
@@ -280,6 +308,12 @@ out:
   g_free (box);
   g_strfreev (parts);
   return result;
+}
+
+JrKey *
+jr_key_unwrap (const char *wrapped, const char *secret)
+{
+  return jr_key_unwrap_for (wrapped, secret, NULL);
 }
 
 guint8 *
@@ -341,10 +375,9 @@ jr_recovery_key_new (void)
 gboolean
 jr_recovery_key_normalize (const char *in, char out[JR_RECOVERY_NORM_LEN])
 {
-  if (in == NULL)
-    return FALSE;
   int n = 0;
-  for (const char *p = in; *p != '\0'; p++)
+  gboolean bad = in == NULL;
+  for (const char *p = in; !bad && *p != '\0'; p++)
     {
       char c = g_ascii_toupper (*p);
       if (c == ' ' || c == '-')
@@ -354,12 +387,15 @@ jr_recovery_key_normalize (const char *in, char out[JR_RECOVERY_NORM_LEN])
       else if (c == 'I' || c == 'L')
         c = '1';
       if (strchr (CROCKFORD, c) == NULL || n == RECOVERY_SYMBOLS)
-        {
-          sodium_memzero (out, JR_RECOVERY_NORM_LEN);
-          return FALSE;
-        }
-      out[n++] = c;
+        bad = TRUE;
+      else
+        out[n++] = c;
+    }
+  if (bad || n != RECOVERY_SYMBOLS)
+    {
+      sodium_memzero (out, JR_RECOVERY_NORM_LEN); /* leave nothing behind */
+      return FALSE;
     }
   out[n] = '\0';
-  return n == RECOVERY_SYMBOLS;
+  return TRUE;
 }

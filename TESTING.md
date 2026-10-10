@@ -80,6 +80,7 @@ build/tests/test_jdate --verbose
 | `jdate` | 10 tables, 245 cases | every day 1900-2200 (773,177 checks), 40,000 random pairs, 24,000 moments in 6 time zones, 35,190 typed dates |
 | `text` | 2 tables, 29 cases (Unicode spaces, emoji, broken bytes, 12 MB under 1 s) | 20,000 random texts, 20,000 random byte strings |
 | `lockout` | 2 tables, 56 cases (30 s wait, PIN block, restarts, saved form incl. overflow) | 5,000 random event scripts, each checked after every event, straight and with a restart after every event (199,816 checks) |
+| `vault` | 8 tables, 157 cases (PIN, passphrase and recovery-key rules; every kind of damage to a saved key; device-bound keys incl. an edited version tag; sealing and tampering; 10 MB entry) | 300 random keys and secrets with damage, 2,000 recovery keys typed messily, 2,000 random texts sealed and bit-flipped |
 
 ## Manual checks
 

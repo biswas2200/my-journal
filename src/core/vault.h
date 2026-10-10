@@ -59,10 +59,25 @@ JrKey   *jr_key_dup            (const JrKey *key);
 char    *jr_key_export         (const JrKey *key);
 JrKey   *jr_key_import         (const char *b64);
 
-/* Encrypts `key` under `secret`. Returns a printable string (g_free). */
+/* Encrypts `key` under `secret`. Returns a printable string (g_free):
+ * "v1$ops$mem$salt$nonce$box". */
 char    *jr_key_wrap           (const JrKey *key, const char *secret, JrKdfCost cost);
 /* NULL if the secret is wrong or the string is malformed. */
 JrKey   *jr_key_unwrap         (const char *wrapped, const char *secret);
+
+/* A PIN has only a million values, so its wrapped key also needs a device
+ * secret: 32 random bytes kept outside the journal file (in the login
+ * keyring). The key-encryption key is BLAKE2b keyed with the device
+ * secret over Argon2id(PIN), so a copy of the file alone gives nothing to
+ * test PIN guesses against. Saved as "d1$..."; with `device` NULL these
+ * are jr_key_wrap and jr_key_unwrap ("v1$..."). Unwrapping needs exactly
+ * what was used: a "d1" key never opens without its device secret, and a
+ * "v1" key never opens with one. */
+char    *jr_key_wrap_for       (const JrKey *key, const char *secret, const JrKey *device,
+                                JrKdfCost cost);
+JrKey   *jr_key_unwrap_for     (const char *wrapped, const char *secret, const JrKey *device);
+/* TRUE for a well-formed "d1" key. */
+gboolean jr_key_wrap_needs_device (const char *wrapped);
 /* The Argon2id cost a wrapped key was made with. */
 gboolean jr_key_wrap_cost      (const char *wrapped, JrKdfCost *out);
 
@@ -83,5 +98,6 @@ void     jr_secret_free        (char *s);
  * Free with jr_secret_free. */
 char    *jr_recovery_key_new   (void);
 /* Uppercases, drops spaces and dashes, maps O->0 and I/L->1, then checks it.
- * `out` must hold JR_RECOVERY_NORM_LEN bytes. */
+ * `out` must hold JR_RECOVERY_NORM_LEN bytes; it is all zeros when the
+ * key is refused. */
 gboolean jr_recovery_key_normalize (const char *in, char out[JR_RECOVERY_NORM_LEN]);
