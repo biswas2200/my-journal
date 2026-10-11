@@ -30,6 +30,7 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | No sequence of actions locks the owner out | `/journal/hidden/never-locked-out` |
 | Locked journal reads and writes nothing | `/journal/scenarios` |
 | Opens on today with the cursor ready; `Ctrl+Enter` stamps a new block; autosave after ~1 s | `/ui/flow` |
+| Typing past the bottom keeps the cursor in view with a short glide; moving it up scrolls up (small, default and maximized windows) | `/ui/follow-cursor` |
 | Day dropdown opens, frees its content on close, gives the cursor back | `/ui/flow` |
 | Past days are read-only | `/ui/flow` |
 | Locking clears every text view and the key; unlock brings the text back | `/ui/flow` |

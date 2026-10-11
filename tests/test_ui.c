@@ -1053,6 +1053,124 @@ test_ui_master_upgrade (void)
   g_rmdir (dir);
 }
 
+/* Is the cursor of the focused block fully inside the visible part of
+ * the page? */
+static gboolean
+cursor_on_screen (JrWindow *win)
+{
+  GtkWidget *focus = gtk_root_get_focus (GTK_ROOT (win));
+  if (!GTK_IS_TEXT_VIEW (focus))
+    return FALSE;
+  GtkTextView *tv = GTK_TEXT_VIEW (focus);
+  GtkTextBuffer *buf = gtk_text_view_get_buffer (tv);
+  GtkTextIter it;
+  GdkRectangle r;
+  int wx, wy;
+  gtk_text_buffer_get_iter_at_mark (buf, &it, gtk_text_buffer_get_insert (buf));
+  gtk_text_view_get_iter_location (tv, &it, &r);
+  gtk_text_view_buffer_to_window_coords (tv, GTK_TEXT_WINDOW_WIDGET, r.x, r.y, &wx, &wy);
+  GtkWidget *scroller = gtk_widget_get_ancestor (focus, GTK_TYPE_SCROLLED_WINDOW);
+  graphene_point_t p = GRAPHENE_POINT_INIT ((float) wx, (float) wy), q;
+  if (scroller == NULL || !gtk_widget_compute_point (focus, scroller, &p, &q))
+    return FALSE;
+  return q.y >= 0 && q.y + r.height <= gtk_widget_get_height (scroller);
+}
+
+static void
+count_change (GtkAdjustment *adj, gpointer data)
+{
+  (void) adj;
+  (*(int *) data)++;
+}
+
+/* Typing past the bottom of the page keeps the cursor in view, gliding
+ * there rather than jumping, and moving the cursor back up scrolls up:
+ * in a small window, at the default size and maximized. */
+static void
+test_ui_follow_cursor (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  load_style ();
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+  gboolean animations = TRUE;
+  g_object_get (gtk_settings_get_default (), "gtk-enable-animations", &animations, NULL);
+  static const char *const SIZES[] = { "small", "default", "maximized" };
+
+  for (int size = 0; size < 3; size++)
+    {
+      JrWindow *win = jr_window_new (NULL, open_journal (path));
+      if (size == 0)
+        gtk_window_set_default_size (GTK_WINDOW (win), 720, 420);
+      else if (size == 2)
+        gtk_window_maximize (GTK_WINDOW (win));
+      gtk_window_present (GTK_WINDOW (win));
+      pump (500);
+      if (size == 2 && !gtk_window_is_maximized (GTK_WINDOW (win)))
+        {
+          g_test_message ("this display cannot maximize; skipped that size");
+          gtk_window_close (GTK_WINDOW (win));
+          pump (200);
+          continue;
+        }
+      g_test_message ("window %s: %d x %d", SIZES[size], gtk_widget_get_width (GTK_WIDGET (win)),
+                      gtk_widget_get_height (GTK_WIDGET (win)));
+
+      /* Only the clock: no "time comes from your laptop clock". */
+      GtkWidget *view = gtk_window_get_child (GTK_WINDOW (win));
+      g_assert_true (has_label_containing (view, "· clock"));
+      g_assert_false (has_label_containing (view, "laptop clock"));
+
+      /* A new block at the end: its cursor is on screen at once. */
+      JrDayView *dv = jr_window_get_day_view (win);
+      jr_day_view_new_entry (dv);
+      pump (400);
+      g_assert_true (cursor_on_screen (win));
+      GtkWidget *focus = gtk_root_get_focus (GTK_ROOT (win));
+      GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (
+        GTK_SCROLLED_WINDOW (gtk_widget_get_ancestor (focus, GTK_TYPE_SCROLLED_WINDOW)));
+
+      /* Typing line after line past the bottom: the page follows. */
+      for (int line = 0; line < 30; line++)
+        {
+          type_text (win, "Another line of writing, long enough to take some room on the page.\n");
+          pump (40);
+          if (line == 29 || line % 10 == 9)
+            g_assert_true (cursor_on_screen (win) || (pump (300), cursor_on_screen (win)));
+        }
+      pump (300);
+      g_assert_true (cursor_on_screen (win));
+      g_assert_cmpfloat (gtk_adjustment_get_value (adj), >, 0.0);
+      if (size == 1)
+        shot (GTK_WIDGET (win), "02d-typing-at-the-bottom");
+
+      /* Back to the top of the block: the page glides up to it. */
+      int changes = 0;
+      gulong id = g_signal_connect (adj, "value-changed", G_CALLBACK (count_change), &changes);
+      GtkTextBuffer *buf = gtk_text_view_get_buffer (GTK_TEXT_VIEW (focus));
+      GtkTextIter start;
+      gtk_text_buffer_get_start_iter (buf, &start);
+      gtk_text_buffer_place_cursor (buf, &start);
+      pump (500);
+      g_signal_handler_disconnect (adj, id);
+      g_assert_true (cursor_on_screen (win));
+      if (animations)
+        g_assert_cmpint (changes, >=, 3); /* several frames: a glide, not a jump */
+      g_test_message ("window %s: scrolled up in %d steps", SIZES[size], changes);
+      if (size == 1)
+        shot (GTK_WIDGET (win), "02e-cursor-moved-up");
+
+      gtk_window_close (GTK_WINDOW (win));
+      pump (200);
+    }
+  g_remove (path);
+  g_rmdir (dir);
+}
+
 /* Day dropdown: typed dates, bad input, and the month pages. */
 static void
 test_ui_day_dropdown (void)
@@ -1128,6 +1246,7 @@ main (int argc, char **argv)
   g_test_add_func ("/ui/pin-lock-screen", test_ui_pin_lock_screen);
   g_test_add_func ("/ui/master-upgrade", test_ui_master_upgrade);
   g_test_add_func ("/ui/day-dropdown", test_ui_day_dropdown);
+  g_test_add_func ("/ui/follow-cursor", test_ui_follow_cursor);
   int rc = g_test_run ();
   if (keyring != NULL)
     g_hash_table_unref (keyring);

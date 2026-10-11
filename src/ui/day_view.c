@@ -25,7 +25,7 @@ typedef struct {
   GtkWidget     *row, *stamp, *text;
   GtkTextBuffer *buffer;
   GtkEventController *focus;
-  gulong         changed_id;
+  gulong         changed_id, mark_id;
 } Block;
 
 struct _JrDayView {
@@ -38,6 +38,12 @@ struct _JrDayView {
   GPtrArray *blocks;       /* Block*, in display order */
   guint      save_id, words_id, remeasure_id;
   int        remeasure_frames;
+  /* Keeping the cursor in view (see follow_cursor). */
+  GtkTextView *follow_view; /* the block whose cursor to show, or NULL */
+  guint      follow_id;
+  int        follow_frames;   /* frames left to re-check the layout */
+  gint64     follow_start;    /* frame time the glide began, 0 if none */
+  double     follow_from, follow_to;
   gint64     last_edit;    /* unix seconds of the last keystroke here */
   int        clock_minute; /* minute last drawn on the clock */
   gboolean   save_failed;
@@ -189,6 +195,137 @@ stamp_block (Block *b, gint64 now)
   set_stamp_label (b);
 }
 
+/* ---- keeping the cursor in view ------------------------------------- */
+
+/* A block is a text view inside the page, not a scrolled view of its own,
+ * so GTK does not follow its cursor. After every change or cursor move
+ * the page glides (about 160 ms, easing out) just far enough to show the
+ * cursor line with some room below it, or above it when the cursor moves
+ * up. It runs from a tick callback for a few frames, so it sees the new
+ * height once GTK has laid the text out, then stops: nothing runs while
+ * the writer is idle. With animations off (system setting) it jumps. */
+#define FOLLOW_MS 160
+#define FOLLOW_BELOW 56   /* px kept visible under the cursor line */
+#define FOLLOW_ABOVE 24   /* px kept visible over it when moving up */
+#define FOLLOW_FRAMES 6   /* frames to wait for the layout to catch up */
+
+static gboolean
+animations_enabled (GtkWidget *w)
+{
+  gboolean on = TRUE;
+  g_object_get (gtk_widget_get_settings (w), "gtk-enable-animations", &on, NULL);
+  return on;
+}
+
+/* Where the page should scroll so the cursor shows, measured from `base`
+ * (where it is, or is gliding to). FALSE if it already shows. */
+static gboolean
+cursor_target (JrDayView *self, GtkAdjustment *adj, double base, double *out)
+{
+  GtkTextView *tv = self->follow_view;
+  GtkWidget *viewport = gtk_scrolled_window_get_child (GTK_SCROLLED_WINDOW (self->scroller));
+  GtkWidget *page = GTK_IS_VIEWPORT (viewport) ? gtk_viewport_get_child (GTK_VIEWPORT (viewport)) : NULL;
+  if (page == NULL || gtk_widget_get_width (GTK_WIDGET (tv)) <= 1)
+    return FALSE; /* not laid out yet */
+
+  GtkTextBuffer *buf = gtk_text_view_get_buffer (tv);
+  GtkTextIter it;
+  GdkRectangle r;
+  int x, y;
+  gtk_text_buffer_get_iter_at_mark (buf, &it, gtk_text_buffer_get_insert (buf));
+  gtk_text_view_get_iter_location (tv, &it, &r);
+  gtk_text_view_buffer_to_window_coords (tv, GTK_TEXT_WINDOW_WIDGET, r.x, r.y, &x, &y);
+  graphene_point_t p = GRAPHENE_POINT_INIT ((float) x, (float) y), q;
+  if (!gtk_widget_compute_point (GTK_WIDGET (tv), page, &p, &q))
+    return FALSE;
+
+  double top = q.y - FOLLOW_ABOVE, bottom = q.y + r.height + FOLLOW_BELOW;
+  double height = gtk_adjustment_get_page_size (adj);
+  double target;
+  if (bottom > base + height)
+    target = bottom - height;
+  else if (top < base)
+    target = top;
+  else
+    return FALSE;
+  double lower = gtk_adjustment_get_lower (adj);
+  target = CLAMP (target, lower, MAX (lower, gtk_adjustment_get_upper (adj) - height));
+  if (ABS (target - base) < 0.5)
+    return FALSE;
+  *out = target;
+  return TRUE;
+}
+
+static gboolean
+follow_tick (GtkWidget *widget, GdkFrameClock *clock, gpointer data)
+{
+  (void) data;
+  JrDayView *self = JR_DAY_VIEW (widget);
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (self->scroller));
+  gint64 now = gdk_frame_clock_get_frame_time (clock);
+
+  if (self->follow_frames > 0)
+    {
+      self->follow_frames--;
+      double base = self->follow_start != 0 ? self->follow_to : gtk_adjustment_get_value (adj);
+      double target;
+      if (self->follow_view != NULL && cursor_target (self, adj, base, &target))
+        {
+          if (!animations_enabled (widget))
+            {
+              gtk_adjustment_set_value (adj, target);
+              self->follow_start = 0;
+            }
+          else
+            {
+              /* Start, or bend a running glide toward the new place. */
+              self->follow_from = gtk_adjustment_get_value (adj);
+              self->follow_to = target;
+              self->follow_start = now;
+            }
+        }
+    }
+
+  if (self->follow_start != 0)
+    {
+      double t = (double) (now - self->follow_start) / (FOLLOW_MS * 1000.0);
+      if (t >= 1.0)
+        {
+          gtk_adjustment_set_value (adj, self->follow_to);
+          self->follow_start = 0;
+        }
+      else
+        {
+          double u = 1.0 - t; /* ease out: fast at first, settling softly */
+          gtk_adjustment_set_value (adj, self->follow_from + (self->follow_to - self->follow_from) * (1.0 - u * u * u));
+        }
+    }
+
+  if (self->follow_frames > 0 || self->follow_start != 0)
+    return G_SOURCE_CONTINUE;
+  self->follow_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+/* Keep `b`'s cursor on screen over the next frames. */
+static void
+follow_cursor (JrDayView *self, Block *b)
+{
+  self->follow_view = GTK_TEXT_VIEW (b->text);
+  self->follow_frames = FOLLOW_FRAMES;
+  if (self->follow_id == 0)
+    self->follow_id = gtk_widget_add_tick_callback (GTK_WIDGET (self), follow_tick, NULL, NULL);
+}
+
+static void
+on_mark_set (GtkTextBuffer *buffer, GtkTextIter *where, GtkTextMark *mark, gpointer data)
+{
+  (void) where;
+  Block *b = data;
+  if (mark == gtk_text_buffer_get_insert (buffer))
+    follow_cursor (b->view, b);
+}
+
 static void
 on_buffer_changed (GtkTextBuffer *buffer, gpointer data)
 {
@@ -211,6 +348,7 @@ on_buffer_changed (GtkTextBuffer *buffer, gpointer data)
     self->words_id = g_timeout_add (WORDS_DELAY_MS, on_words_timeout, self);
   gtk_label_set_text (GTK_LABEL (self->saved_label), "Saving…");
   gtk_widget_set_visible (self->saved_icon, FALSE);
+  follow_cursor (self, b);
 }
 
 static void
@@ -237,9 +375,12 @@ block_free (gpointer data)
    * screen down, and losing focus then would call back into freed memory. */
   if (b->focus != NULL)
     g_signal_handlers_disconnect_by_data (b->focus, b);
+  if (b->view->follow_view == GTK_TEXT_VIEW (b->text))
+    b->view->follow_view = NULL;
   if (b->buffer != NULL)
     {
       g_signal_handler_disconnect (b->buffer, b->changed_id);
+      g_signal_handler_disconnect (b->buffer, b->mark_id);
       /* Drop the text now rather than whenever GTK frees the buffer. */
       gtk_text_buffer_set_text (b->buffer, "", 0);
     }
@@ -287,6 +428,7 @@ add_block (JrDayView *self, gint64 id, gint64 stamped_at, const char *text)
     gtk_text_buffer_set_text (b->buffer, text, -1);
   b->words = jr_count_words (text);
   b->changed_id = g_signal_connect (b->buffer, "changed", G_CALLBACK (on_buffer_changed), b);
+  b->mark_id = g_signal_connect (b->buffer, "mark-set", G_CALLBACK (on_mark_set), b);
   gtk_box_append (GTK_BOX (b->row), b->text);
 
   b->focus = gtk_event_controller_focus_new ();
@@ -523,7 +665,7 @@ build_top (JrDayView *self)
     {
       self->clock = jr_label ("", "clock", NULL);
       self->clock_minute = -1;
-      g_snprintf (text, sizeof text, "%s · time comes from your laptop clock",
+      g_snprintf (text, sizeof text, "%s · clock",
                   jr_weekday_name (self->day));
     }
   else
@@ -699,6 +841,10 @@ jr_day_view_dispose (GObject *object)
   if (self->remeasure_id != 0)
     gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->remeasure_id);
   self->remeasure_id = 0;
+  if (self->follow_id != 0)
+    gtk_widget_remove_tick_callback (GTK_WIDGET (self), self->follow_id);
+  self->follow_id = 0;
+  self->follow_view = NULL;
   /* Wipe and free blocks while their buffers still exist. */
   g_clear_pointer (&self->blocks, g_ptr_array_unref);
   G_OBJECT_CLASS (jr_day_view_parent_class)->dispose (object);
