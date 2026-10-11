@@ -246,6 +246,12 @@ now fixed. Two web-only CSS rules are switched off for `data/` because
 GTK CSS uses widget names a browser does not know (see the comment in
 `sonar-project.properties`).
 
+Result on SonarQube Cloud (11 Oct 2026, C code included): quality gate
+passed, 0 bugs, 0 vulnerabilities, 0 security hotspots, 0 code smells,
+0% duplication, 89.3% line coverage. Its first scan found one real
+issue: two lock states compared with `memcmp`, padding bytes included;
+they are now compared field by field.
+
 Note that Community Build has no C/C++ analyzer, so it checks the
 stylesheet, XML, desktop file and scripts, plus a secrets scan of every
 file, but not the C code. The C code is covered by the compiler
