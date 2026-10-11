@@ -227,7 +227,9 @@ safe as the original).
 ### SonarQube
 
 `sonar-project.properties` points SonarQube at the C sources, meson's
-`compile_commands.json` and the gcov reports. With a SonarQube server
+`compile_commands.json` and the line coverage that `tools/coverage.sh`
+writes to `build-cov/coverage.xml`. SonarQube Cloud scans every push
+from GitHub Actions, C code included. With a local SonarQube server
 running:
 
 ```bash

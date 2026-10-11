@@ -352,7 +352,7 @@ jr_journal_finish_unlock (JrJournal *j, JrUnlockAttempt *a)
         jr_lockout_pin_success (&j->lockout); /* the right PIN clears everything */
       else
         jr_lockout_success (&j->lockout);     /* a blocked PIN stays blocked */
-      if (memcmp (&before, &j->lockout, sizeof before) != 0)
+      if (!jr_lockout_equal (&before, &j->lockout))
         save_lockout (j);
       result = JR_UNLOCK_OK;
     }

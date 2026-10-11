@@ -40,6 +40,9 @@ void     jr_lockout_pin_fail       (JrLockout *l);
 /* The right PIN, or a new PIN was set: clears everything. */
 void     jr_lockout_pin_success    (JrLockout *l);
 
+/* Same values (compares fields: the struct has padding, so not memcmp). */
+gboolean jr_lockout_equal          (const JrLockout *a, const JrLockout *b);
+
 /* "failed:until:pin_failed". Older files saved "failed:until". */
 void     jr_lockout_to_string      (const JrLockout *l, char *buf, gsize len);
 gboolean jr_lockout_from_string    (const char *s, JrLockout *out);

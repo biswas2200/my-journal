@@ -66,6 +66,12 @@ jr_lockout_pin_success (JrLockout *l)
   *l = (JrLockout){ 0 };
 }
 
+gboolean
+jr_lockout_equal (const JrLockout *a, const JrLockout *b)
+{
+  return a->failed == b->failed && a->until == b->until && a->pin_failed == b->pin_failed;
+}
+
 void
 jr_lockout_to_string (const JrLockout *l, char *buf, gsize len)
 {

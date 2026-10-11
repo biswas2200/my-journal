@@ -280,12 +280,61 @@ test_hidden_random_scripts (void)
   jr_cases_done (&c);
 }
 
+/* Builds a lockout whose padding bytes hold `fill`, as a struct copied
+ * around in memory may. */
+static JrLockout
+with_padding (int failed, gint64 until, int pin_failed, guchar fill)
+{
+  JrLockout l;
+  memset (&l, fill, sizeof l);
+  l.failed = failed;
+  l.until = until;
+  l.pin_failed = pin_failed;
+  return l;
+}
+
+/* Constraints: any two lockouts. Equal means the same three values,
+ * whatever the bytes between the fields hold. */
+static void
+test_equal (void)
+{
+  static const struct {
+    const char *name;
+    int failed[2];
+    gint64 until[2];
+    int pin_failed[2];
+    gboolean expected;
+  } cases[] = {
+    { "both empty", { 0, 0 }, { 0, 0 }, { 0, 0 }, TRUE },
+    { "same values", { 3, 3 }, { T0, T0 }, { 2, 2 }, TRUE },
+    { "different count", { 3, 4 }, { T0, T0 }, { 2, 2 }, FALSE },
+    { "different wait", { 0, 0 }, { T0, T0 + 1 }, { 0, 0 }, FALSE },
+    { "different PIN count", { 0, 0 }, { 0, 0 }, { 4, 5 }, FALSE },
+    { "wait differs only in the high bits", { 0, 0 }, { 1, 1 + (G_GINT64_CONSTANT (1) << 40) }, { 0, 0 },
+      FALSE },
+  };
+  JrCases c = { .table = "equal" };
+  for (gsize i = 0; i < G_N_ELEMENTS (cases); i++)
+    for (int fill = 0; fill < 2; fill++) /* same, then different padding */
+      {
+        JrLockout a = with_padding (cases[i].failed[0], cases[i].until[0], cases[i].pin_failed[0], 0x00);
+        JrLockout b = with_padding (cases[i].failed[1], cases[i].until[1], cases[i].pin_failed[1],
+                                    fill ? 0xAA : 0x00);
+        gboolean got = jr_lockout_equal (&a, &b);
+        jr_case (&c, cases[i].name, got == cases[i].expected && jr_lockout_equal (&b, &a) == got,
+                 "Input padding %s  Expected %s  Got %s", fill ? "different" : "same",
+                 cases[i].expected ? "equal" : "different", got ? "equal" : "different");
+      }
+  jr_cases_done (&c);
+}
+
 int
 main (int argc, char **argv)
 {
   g_test_init (&argc, &argv, NULL);
   g_test_add_func ("/lockout/rules", test_rules);
   g_test_add_func ("/lockout/saved-form", test_saved_form);
+  g_test_add_func ("/lockout/equal", test_equal);
   g_test_add_func ("/lockout/hidden/random-scripts", test_hidden_random_scripts);
   return g_test_run ();
 }
