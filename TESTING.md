@@ -20,11 +20,15 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Calendar arithmetic, weekdays and date text, 0001-01-01 to 9999-12-31 | `core/jdate` (tables, plus `/jdate/hidden/every-day`) |
 | Active time: counts only with a keystroke in the last 60 s, flushes every 15 s, splits at midnight, stops on lock | `core/active_time` |
 | Calendar shading: none, 1-10, 11-20, 21+ minutes | `core/shade` |
-| PIN lockout: 5 tries then 30 s, ignores tries while waiting, survives restart | `core/lockout`, `/journal/lockout-persists` |
+| Wrong tries: 5 wrong PINs block the PIN (no timer); 5 wrong passphrases or keys wait 30 s; both survive a restart | `core/lockout`, `/journal/scenarios` |
 | Storage: entries ordered by stamp, minutes add up, file 0600 in a 0700 folder | `core/db` |
-| Encryption: bodies unreadable in the file, tamper detected, wrong key fails | `core/vault`, `/journal/no-pin` |
-| PIN set / change / turn off, recovery key unlocks, new key replaces old | `core/journal` |
-| Locked journal reads and writes nothing | `/journal/enable-pin` |
+| Encryption: bodies unreadable in the file, tamper detected, wrong key fails | `core/vault`, `/journal/entries` |
+| PIN needs a master passphrase; set / change / turn off; recovery key unlocks, new key replaces old | `/journal/scenarios` |
+| Blocked PIN: master passphrase or recovery key opens it, a new different PIN is a must, no entries until then | `/journal/scenarios`, `/ui/pin-lock-screen` |
+| PIN bound to the login keyring: a copy of the file does not open with it; keyring missing or unavailable handled | `core/vault` (`/vault/device-bound`), `/journal/scenarios` |
+| A PIN from before master passphrases asks for one and moves onto the keyring | `/journal/scenarios`, `/ui/master-upgrade` |
+| No sequence of actions locks the owner out | `/journal/hidden/never-locked-out` |
+| Locked journal reads and writes nothing | `/journal/scenarios` |
 | Opens on today with the cursor ready; `Ctrl+Enter` stamps a new block; autosave after ~1 s | `/ui/flow` |
 | Day dropdown opens, frees its content on close, gives the cursor back | `/ui/flow` |
 | Past days are read-only | `/ui/flow` |
@@ -32,17 +36,17 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Loaded text is not undoable; long text is laid out at full height | `/ui/flow` |
 | Quit while writing saves; window and key are destroyed | `/ui/save-on-quit-and-sleep` |
 | Sleep while writing saves before locking | `/ui/save-on-quit-and-sleep` |
-| Very long entry (1 MiB) saves fast; typing stays responsive | `/ui/long-entry`, `/journal/large-entry` |
+| Very long entry (1 MiB) saves fast; typing stays responsive | `/ui/long-entry`, `/journal/huge-entry` |
 | No memory growth across screens and lock cycles | `/ui/no-growth` |
-| Passphrase: rules (12+ chars, NFC), unlock, wrong one refused, switch to/from PIN | `core/vault`, `/journal/passphrase*`, `/ui/passphrase` |
-| Every lock change needs the current secret; wrong ones count; a lock mid-change applies nothing | `/journal/lock-jobs`, `/journal/change-disable`, `/ui/passphrase` |
-| Old weaker keys re-saved at the current Argon2id cost on unlock | `/journal/upgrade-cost` |
+| Passphrase: rules (12+ chars, NFC), unlock, wrong one refused, switch to/from PIN | `core/vault`, `/journal/scenarios`, `/ui/passphrase` |
+| Every lock change needs the current secret; wrong ones count; a lock mid-change applies nothing | `/journal/scenarios`, `/journal/three-steps`, `/ui/passphrase` |
+| Old weaker keys re-saved at the current Argon2id cost on unlock (PIN, master, passphrase) | `/journal/stronger-cost` |
 | Recovery key cannot be copied or selected | `/ui/flow` |
 | Writing area marked private for input methods | `/ui/flow` |
 | Real binary: non-dumpable, core dumps off, clean exit on SIGTERM | `hardened` |
 | Crash during saving (SIGKILL at random moments): no lost acknowledged save, file intact | `crash` (`/crash/entries-survive-kill`) |
-| Crash during a PIN change: old or new PIN still opens it, recovery key still works | `crash` (`/crash/lock-change-survives-kill`) |
-| Lock screen keyboard: PIN on 6th digit, Backspace/Esc, recovery key, 5 wrong PINs then wait | `/ui/pin-lock-screen` |
+| Crash during a PIN change: old or new PIN still opens it, master passphrase and recovery key still work | `crash` (`/crash/lock-change-survives-kill`) |
+| Lock screen keyboard: PIN on 6th digit, Backspace/Esc, master passphrase, recovery key, 5 wrong PINs block it, closing the new-PIN dialog locks again | `/ui/pin-lock-screen` |
 | Day dropdown: typed dates, refusing bad/future dates, month pages | `/ui/day-dropdown` |
 
 ### LeetCode-style tests
@@ -81,6 +85,7 @@ build/tests/test_jdate --verbose
 | `text` | 2 tables, 29 cases (Unicode spaces, emoji, broken bytes, 12 MB under 1 s) | 20,000 random texts, 20,000 random byte strings |
 | `lockout` | 2 tables, 56 cases (30 s wait, PIN block, restarts, saved form incl. overflow) | 5,000 random event scripts, each checked after every event, straight and with a restart after every event (199,816 checks) |
 | `vault` | 8 tables, 157 cases (PIN, passphrase and recovery-key rules; every kind of damage to a saved key; device-bound keys incl. an edited version tag; sealing and tampering; 10 MB entry) | 300 random keys and secrets with damage, 2,000 recovery keys typed messily, 2,000 random texts sealed and bit-flipped |
+| `journal` | 30 scenarios, 248 checked steps, written like LeetCode's "design a class" problems (operations in, outputs expected) | 150 random action sequences with right and wrong secrets, restarts and keyring trouble: entries open exactly when allowed, a copy of the file never opens with the PIN, and the owner always gets back in |
 
 ## Manual checks
 
@@ -110,13 +115,20 @@ with status 0.*
 ### 3. Wrong PIN five times
 1. Lock (`Ctrl+L`), then type five wrong PINs.
 
-*After each of the first four: "Wrong PIN. N tries left…". After the
-fifth: "Too many wrong tries. Try again in 30 s.", counting down; digits
-do nothing while it counts. At 0: "You can try again now.", and the
-right PIN unlocks.*
+*After each of the first four: "Wrong PIN. N tries left before the PIN is
+blocked." After the fifth the screen asks for the master passphrase
+("the PIN is blocked"); digits do nothing and there is no "Use PIN
+instead".*
+2. Quit and start the app again: *still blocked, no timer.*
+3. Enter the master passphrase. *A "Choose a new PIN" dialog opens over
+   Lock & security; no day page is shown. Typing the old PIN twice says
+   it is the PIN being replaced.*
+4. Close the dialog. *The journal locks again.* Repeat 3 with a new PIN:
+   *today's page opens, and the new PIN unlocks next time.*
 
-### 4. Restart during lockout
-1. Trigger the lockout (check 3), wait ~10 s, then quit with `Ctrl+Q`.
+### 4. Restart during a wait
+1. With a passphrase lock (or on the master passphrase screen), type five
+   wrong ones, wait ~10 s, then quit with `Ctrl+Q`.
 2. Start the app again at once.
 
 *The countdown continues from about 20 s; it does not reset to a fresh
@@ -143,8 +155,8 @@ breaks makes each keystroke slow (GTK re-wraps the whole paragraph).
 
 ### 7. Recovery key
 1. Set a PIN or passphrase and write down the recovery key shown.
-2. Lock, choose "Forgot PIN? Use recovery key", and type the key in
-   lower case without dashes.
+2. Lock, choose "Use recovery key", and type the key in lower case
+   without dashes.
 
 *It unlocks and opens Lock & security so a new PIN or passphrase can be
 set. A wrong key counts toward the 5-try lockout. The key on screen
@@ -165,3 +177,20 @@ ls -l ~/.local/share/journal/journal.db
 sqlite3 ~/.local/share/journal/journal.db 'select hex(substr(body,1,16)) from entries limit 3'
 ```
 *Mode `-rw-------`. Bodies are random-looking bytes, never your words.*
+
+### 10. Upgrading a PIN from an older version
+1. With a PIN set by the earlier version, install this one and unlock
+   with the PIN.
+
+*A "Set a master passphrase" dialog asks for the PIN once more and a
+master passphrase twice; closing it locks the journal. Afterwards
+Passwords and Keys (Seahorse) > Login shows a "Journal PIN key" item,
+and Lock & security shows "Change master passphrase".*
+
+### 11. The PIN needs this laptop's keyring
+1. Copy `~/.local/share/journal/journal.db` to another user account (or
+   another machine) and open it there with `JOURNAL_DB=...`.
+
+*The PIN cannot be checked ("the login keyring ... no longer has its
+key"); the master passphrase opens it, and a new PIN is then set up for
+that keyring.*

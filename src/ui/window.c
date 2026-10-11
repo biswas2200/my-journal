@@ -17,6 +17,7 @@ struct _JrWindow {
   JrSleepWatch *sleep;
   JrDayView    *day_view; /* the current screen if it is a day, else NULL */
   GtkWindow    *dialog;   /* not owned; cleared when it is destroyed */
+  gboolean      locked;   /* the lock screen is showing */
 };
 
 G_DEFINE_FINAL_TYPE (JrWindow, jr_window, GTK_TYPE_APPLICATION_WINDOW)
@@ -105,10 +106,18 @@ jr_window_get_journal (JrWindow *win)
   return win->journal;
 }
 
+/* Entries open only when unlocked and no new PIN is pending; a day page
+ * without them would look empty and could not save. */
+static gboolean
+entries_open (JrWindow *win)
+{
+  return jr_journal_is_unlocked (win->journal) && !jr_journal_needs_new_pin (win->journal);
+}
+
 void
 jr_window_show_day (JrWindow *win, JrDay day)
 {
-  if (!jr_journal_is_unlocked (win->journal))
+  if (!entries_open (win))
     return;
   GtkWidget *header = NULL;
   JrDayView *view = jr_day_view_new (win, day, &header);
@@ -172,6 +181,7 @@ show_lock_screen (JrWindow *win, JrLockReason reason)
   GtkWidget *header = NULL;
   GtkWidget *view = jr_lock_view_new (win, reason, jr_now (), &header);
   set_screen (win, header, view);
+  win->locked = TRUE;
 }
 
 void
@@ -184,9 +194,11 @@ jr_window_lock (JrWindow *win, JrLockReason reason)
         jr_window_show_security (win);
       return;
     }
-  if (!jr_journal_is_unlocked (win->journal))
-    return; /* already locked */
+  if (win->locked)
+    return; /* already showing the lock screen */
 
+  /* The journal may already be locked underneath (5 wrong PINs while
+   * changing it); this still clears the screen. */
   save_current (win);
   stop_ticking (win);
   close_dialog (win);
@@ -195,11 +207,23 @@ jr_window_lock (JrWindow *win, JrLockReason reason)
 }
 
 void
-jr_window_unlocked (JrWindow *win, gboolean via_recovery)
+jr_window_unlocked (JrWindow *win, JrSecretKind via)
 {
+  win->locked = FALSE;
   jr_active_timer_init (&win->timer, flush_seconds, win);
   start_ticking (win);
-  if (via_recovery)
+  if (jr_journal_needs_new_pin (win->journal))
+    {
+      /* Blocked or lost PIN: no entries until a new one is chosen. */
+      jr_window_show_security (win);
+      jr_security_require_new_pin (win);
+    }
+  else if (jr_journal_needs_master (win->journal))
+    {
+      jr_window_show_security (win);
+      jr_security_require_master (win);
+    }
+  else if (via == JR_SECRET_RECOVERY)
     jr_window_show_security (win); /* likely time to choose a new PIN */
   else
     jr_window_show_today (win);
@@ -384,7 +408,7 @@ jr_window_new (GtkApplication *app, JrJournal *journal)
 
   /* With a PIN, nothing is read until it is entered. */
   if (jr_journal_is_unlocked (journal))
-    jr_window_unlocked (win, FALSE);
+    jr_window_unlocked (win, JR_SECRET_LOCK);
   else
     show_lock_screen (win, JR_LOCK_STARTUP);
   return win;

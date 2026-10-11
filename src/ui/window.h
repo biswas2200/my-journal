@@ -31,8 +31,9 @@ void       jr_window_show_security    (JrWindow *win);
 
 /* Saves, wipes everything on screen and in memory, shows the lock screen. */
 void       jr_window_lock             (JrWindow *win, JrLockReason reason);
-/* Called by the lock screen after a correct PIN or recovery key. */
-void       jr_window_unlocked         (JrWindow *win, gboolean via_recovery);
+/* Called by the lock screen after a correct secret. Asks for a new PIN
+ * or a master passphrase first when the journal needs one. */
+void       jr_window_unlocked         (JrWindow *win, JrSecretKind via);
 
 /* Active-time counter. */
 void       jr_window_note_keystroke   (JrWindow *win);

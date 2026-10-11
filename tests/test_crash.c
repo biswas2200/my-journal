@@ -27,6 +27,40 @@ typedef struct {
 } Ack;
 
 static const char *const PINS[2] = { "111111", "222222" };
+#define MASTER "river lamp quiet oak"
+
+/* The keyring stand-in: one device secret, made before any fork, so the
+ * killed writer and the checking parent see the same one. */
+static JrKey *device_secret;
+static char device_name[64];
+
+static JrDeviceStatus
+mem_load (const char *id, JrKey **out, gpointer user)
+{
+  (void) user;
+  if (device_secret == NULL || strcmp (id, device_name) != 0)
+    return JR_DEVICE_MISSING;
+  *out = jr_key_dup (device_secret);
+  return JR_DEVICE_FOUND;
+}
+
+static gboolean
+mem_save (const char *id, const JrKey *secret, gpointer user)
+{
+  (void) user;
+  jr_key_free (device_secret);
+  device_secret = jr_key_dup (secret);
+  g_strlcpy (device_name, id, sizeof device_name);
+  return TRUE;
+}
+
+static void
+mem_clear (const char *id, gpointer user)
+{
+  (void) id; (void) user;
+}
+
+static const JrDeviceStore STORE = { mem_load, mem_save, mem_clear, NULL };
 
 static JrJournal *
 open_journal (const char *path)
@@ -35,6 +69,7 @@ open_journal (const char *path)
   JrJournal *j = jr_journal_open (path, &error);
   g_assert_no_error (error);
   jr_journal_set_kdf_cost (j, FAST);
+  jr_journal_set_device_store (j, &STORE);
   return j;
 }
 
@@ -189,7 +224,7 @@ test_lock_change_survives_kill (void)
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
   JrJournal *j = open_journal (path);
   jr_journal_add_entry (j, DAY, T0, "still here v1", T0);
-  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, PINS[0]);
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, PINS[0], MASTER);
   g_assert_nonnull (recovery);
   jr_journal_close (j);
 
@@ -227,13 +262,17 @@ test_lock_change_survives_kill (void)
       g_assert_cmpuint (g_hash_table_size (f.versions), ==, 1);
       g_hash_table_unref (f.versions);
       jr_journal_lock (j);
-      /* The recovery key always works too. */
+      /* The master passphrase and the recovery key always work too. */
+      g_assert_cmpint (jr_journal_unlock_with (j, JR_SECRET_MASTER, MASTER, T0), ==, JR_UNLOCK_OK);
+      jr_journal_lock (j);
       g_assert_cmpint (jr_journal_unlock_recovery (j, recovery, T0), ==, JR_UNLOCK_OK);
       jr_journal_close (j);
     }
   g_test_message ("%" G_GSIZE_FORMAT " PIN changes; the journal opened after all %d kills",
                   changes, ROUNDS);
   jr_secret_free (recovery);
+  jr_key_free (device_secret);
+  device_secret = NULL;
   g_remove (path);
   g_rmdir (dir);
 }

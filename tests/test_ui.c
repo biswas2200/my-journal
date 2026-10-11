@@ -7,6 +7,7 @@
 #include <string.h>
 #include <glib/gstdio.h>
 #include <gtk/gtk.h>
+#include <sqlite3.h>
 #include "day_view.h"
 #include "journal.h"
 #include "secret_dialog.h"
@@ -19,6 +20,68 @@
 #endif
 
 static const JrKdfCost FAST = { JR_KDF_OPS_MIN, JR_KDF_MEM_MIN };
+#define MASTER "river lamp quiet oak"
+
+/* The login keyring stand-in: in memory, so tests never touch a real one. */
+static GHashTable *keyring; /* id -> JrKey */
+
+static JrDeviceStatus
+mem_load (const char *id, JrKey **out, gpointer user)
+{
+  (void) user;
+  JrKey *k = keyring != NULL ? g_hash_table_lookup (keyring, id) : NULL;
+  if (k == NULL)
+    return JR_DEVICE_MISSING;
+  *out = jr_key_dup (k);
+  return JR_DEVICE_FOUND;
+}
+
+static gboolean
+mem_save (const char *id, const JrKey *secret, gpointer user)
+{
+  (void) user;
+  if (keyring == NULL)
+    keyring = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify) jr_key_free);
+  g_hash_table_insert (keyring, g_strdup (id), jr_key_dup (secret));
+  return TRUE;
+}
+
+static void
+mem_clear (const char *id, gpointer user)
+{
+  (void) user;
+  if (keyring != NULL)
+    g_hash_table_remove (keyring, id);
+}
+
+static const JrDeviceStore STORE = { mem_load, mem_save, mem_clear, NULL };
+
+/* The app's stylesheet and icons, as main.c loads them, so screenshots
+ * look like the app. Once per process; the display keeps them. */
+static void
+load_style (void)
+{
+  static gboolean loaded;
+  if (loaded)
+    return;
+  loaded = TRUE;
+  GtkCssProvider *css = gtk_css_provider_new ();
+  gtk_css_provider_load_from_resource (css, "/io/github/biswas2200/Journal/style.css");
+  gtk_style_context_add_provider_for_display (gdk_display_get_default (), GTK_STYLE_PROVIDER (css),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  g_object_unref (css);
+  gtk_icon_theme_add_resource_path (gtk_icon_theme_get_for_display (gdk_display_get_default ()),
+                                    "/io/github/biswas2200/Journal/icons");
+}
+
+static JrJournal *
+open_journal (const char *path)
+{
+  JrJournal *j = jr_journal_open (path, NULL);
+  jr_journal_set_kdf_cost (j, FAST);
+  jr_journal_set_device_store (j, &STORE);
+  return j;
+}
 
 static gboolean
 stop_waiting (gpointer flag)
@@ -261,14 +324,9 @@ test_ui_flow (void)
   g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
 
-  GtkCssProvider *css = gtk_css_provider_new ();
-  gtk_css_provider_load_from_resource (css, "/io/github/biswas2200/Journal/style.css");
-  gtk_style_context_add_provider_for_display (gdk_display_get_default (), GTK_STYLE_PROVIDER (css),
-                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-  gtk_icon_theme_add_resource_path (gtk_icon_theme_get_for_display (gdk_display_get_default ()),
-                                    "/io/github/biswas2200/Journal/icons");
+  load_style ();
 
-  JrJournal *j = jr_journal_open (path, NULL);
+  JrJournal *j = open_journal (path);
   jr_journal_set_kdf_cost (j, FAST);
   seed (j);
 
@@ -342,15 +400,15 @@ test_ui_flow (void)
   jr_lock_kind_dialog_show (win, NULL); /* not clicked: only looked at */
   pump (300);
   shot (GTK_WIDGET (find_toplevel ("Lock the journal")), "05e-choose-kind");
-  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456");
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456", MASTER);
   jr_window_settings_changed (win);
   jr_window_show_security (win);
   pump (300);
   shot (GTK_WIDGET (win), "05-security-on");
 
   static const JrSecretStep steps[] = {
-    { "Choose a 6-digit PIN", JR_LOCK_PIN, TRUE },
-    { "Type the same PIN again", JR_LOCK_PIN, TRUE },
+    { "Choose a 6-digit PIN", JR_LOCK_PIN, TRUE, NULL },
+    { "Type the same PIN again", JR_LOCK_PIN, TRUE, NULL },
   };
   GtkWindow *pd = jr_secret_dialog_new (win, "Set a PIN", steps, 2, NULL, NULL);
   pump (300);
@@ -382,7 +440,7 @@ test_ui_flow (void)
 
   /* Unlock: the saved text comes back. */
   g_assert_cmpint (jr_journal_unlock (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
-  jr_window_unlocked (win, FALSE);
+  jr_window_unlocked (win, JR_SECRET_LOCK);
   pump (300);
   text = g_string_new (NULL);
   collect_text (GTK_WIDGET (win), text);
@@ -405,7 +463,6 @@ test_ui_flow (void)
   gtk_window_close (GTK_WINDOW (win));
   pump (200);
   jr_secret_free (recovery);
-  g_object_unref (css);
 
   g_remove (path);
   g_rmdir (dir);
@@ -455,7 +512,7 @@ tour (JrWindow *win, JrJournal *j)
       jr_window_lock (win, JR_LOCK_MANUAL);
       pump (30);
       g_assert_cmpint (jr_journal_unlock (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
-      jr_window_unlocked (win, FALSE);
+      jr_window_unlocked (win, JR_SECRET_LOCK);
       pump (30);
     }
 }
@@ -492,10 +549,10 @@ test_ui_no_growth (void)
     }
   g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
-  JrJournal *j = jr_journal_open (path, NULL);
+  JrJournal *j = open_journal (path);
   jr_journal_set_kdf_cost (j, FAST);
   seed (j);
-  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456");
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456", MASTER);
   jr_secret_free (recovery);
   jr_journal_lock (j);
   jr_journal_unlock (j, "123456", jr_now ());
@@ -560,7 +617,7 @@ test_ui_saves_on_quit_and_sleep (void)
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
 
   /* Quit while writing. */
-  JrJournal *j = jr_journal_open (path, NULL);
+  JrJournal *j = open_journal (path);
   jr_journal_set_kdf_cost (j, FAST);
   JrWindow *win = jr_window_new (NULL, j);
   gtk_window_present (GTK_WINDOW (win));
@@ -570,12 +627,12 @@ test_ui_saves_on_quit_and_sleep (void)
   gtk_window_close (GTK_WINDOW (win)); /* no pump: autosave cannot have run */
   pump (100);
   g_assert_null (win); /* destroyed, so the key is wiped and the file closed */
-  j = jr_journal_open (path, NULL);
+  j = open_journal (path);
   jr_journal_set_kdf_cost (j, FAST);
   g_assert_true (saved_today (j, "typed just before quitting"));
 
   /* Lid close (sleep) while writing. */
-  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456");
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456", MASTER);
   win = jr_window_new (NULL, j);
   gtk_window_present (GTK_WINDOW (win));
   pump (300);
@@ -604,7 +661,7 @@ test_ui_long_entry (void)
     }
   g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
-  JrJournal *j = jr_journal_open (path, NULL);
+  JrJournal *j = open_journal (path);
   JrWindow *win = jr_window_new (NULL, j);
   gtk_window_present (GTK_WINDOW (win));
   pump (300);
@@ -657,11 +714,12 @@ test_ui_passphrase (void)
       g_test_skip ("no display");
       return;
     }
+  load_style ();
   g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
-  JrJournal *j = jr_journal_open (path, NULL);
+  JrJournal *j = open_journal (path);
   jr_journal_set_kdf_cost (j, FAST);
-  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PASSPHRASE, "correct horse battery staple");
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PASSPHRASE, "correct horse battery staple", NULL);
   g_assert_nonnull (recovery);
 
   JrWindow *win = jr_window_new (NULL, j);
@@ -765,11 +823,12 @@ test_ui_pin_lock_screen (void)
       g_test_skip ("no display");
       return;
     }
+  load_style ();
   g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
-  JrJournal *j = jr_journal_open (path, NULL);
+  JrJournal *j = open_journal (path);
   jr_journal_set_kdf_cost (j, FAST);
-  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456");
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456", MASTER);
   JrWindow *win = jr_window_new (NULL, j);
   gtk_window_present (GTK_WINDOW (win));
   pump (200);
@@ -797,7 +856,7 @@ test_ui_pin_lock_screen (void)
   jr_window_lock (win, JR_LOCK_MANUAL);
   pump (100);
   view = gtk_window_get_child (GTK_WINDOW (win));
-  g_signal_emit_by_name (find_button (view, "Forgot PIN? Use recovery key"), "clicked");
+  g_signal_emit_by_name (find_button (view, "Use recovery key"), "clicked");
   pump (50);
   GtkWidget *rec = find_type (view, GTK_TYPE_ENTRY);
   gtk_editable_set_text (GTK_EDITABLE (rec), "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA");
@@ -808,26 +867,188 @@ test_ui_pin_lock_screen (void)
   g_assert_true (wait_unlocked (j, 3000));
   g_assert_true (has_label_containing (gtk_window_get_titlebar (GTK_WINDOW (win)), "Lock & security"));
 
-  /* Five wrong PINs: a 30 s wait, during which even the right PIN is ignored. */
+  /* The master passphrase opens it too. */
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  pump (100);
+  view = gtk_window_get_child (GTK_WINDOW (win));
+  g_signal_emit_by_name (find_button (view, "Forgot PIN? Use master passphrase"), "clicked");
+  pump (50);
+  enter_text (find_password (view), "not the master passphrase");
+  g_assert_true (wait_for_label (view, "Wrong master passphrase", 3000));
+  enter_text (find_password (view), MASTER);
+  g_assert_true (wait_unlocked (j, 3000));
+  g_assert_nonnull (jr_window_get_day_view (win));
+
+  /* Five wrong PINs block the PIN: no timer, the screen asks for the
+   * master passphrase instead, and the PIN cannot even be typed. */
   jr_window_lock (win, JR_LOCK_MANUAL);
   pump (100);
   view = gtk_window_get_child (GTK_WINDOW (win));
   for (int i = 0; i < 4; i++)
     {
       type_pin (view, "000000");
-      g_assert_true (wait_for_label (view, i == 3 ? "1 try left" : "tries left", 3000));
+      g_assert_true (wait_for_label (view, i == 3 ? "1 try left before the PIN is blocked"
+                                                  : "tries left before the PIN is blocked", 3000));
     }
   type_pin (view, "000000");
-  g_assert_true (wait_for_label (view, "Too many wrong tries", 3000));
-  type_pin (view, "123456");
+  g_assert_true (wait_for_label (view, "the PIN is blocked", 3000));
+  g_assert_true (has_label_containing (view, "Enter your master passphrase"));
+  g_assert_null (find_button (view, "Use PIN instead"));
+  type_pin (view, "123456"); /* ignored: not the PIN screen any more */
   pump (300);
   g_assert_false (jr_journal_is_unlocked (j));
-  g_assert_true (has_label_containing (view, "Try again in"));
-  shot (GTK_WIDGET (win), "01c-lockout");
+  shot (GTK_WIDGET (win), "01c-pin-blocked");
+
+  /* The master passphrase opens it, but only to choose a new PIN: no day
+   * page, and the old PIN is refused. */
+  enter_text (find_password (view), MASTER);
+  g_assert_true (wait_unlocked (j, 3000));
+  g_assert_null (jr_window_get_day_view (win));
+  GtkWindow *dlg = find_toplevel ("Choose a new PIN");
+  g_assert_nonnull (dlg);
+  shot (GTK_WIDGET (dlg), "01d-new-pin");
+  type_pin (GTK_WIDGET (dlg), "123456");
+  type_pin (GTK_WIDGET (dlg), "123456");
+  g_assert_true (wait_for_label (GTK_WIDGET (dlg), "the PIN being replaced", 3000));
+
+  /* Closing it instead locks the journal again. */
+  gtk_window_close (dlg);
+  for (int waited = 0; jr_journal_is_unlocked (j) && waited < 3000; waited += 20)
+    pump (20);
+  g_assert_false (jr_journal_is_unlocked (j));
+  view = gtk_window_get_child (GTK_WINDOW (win));
+  g_assert_true (has_label_containing (view, "Enter your master passphrase"));
+
+  /* Again, this time with a new PIN: today's page, and the new PIN works. */
+  enter_text (find_password (view), MASTER);
+  g_assert_true (wait_unlocked (j, 3000));
+  dlg = find_toplevel ("Choose a new PIN");
+  g_assert_nonnull (dlg);
+  type_pin (GTK_WIDGET (dlg), "246810");
+  type_pin (GTK_WIDGET (dlg), "246810");
+  g_assert_true (dialog_gone ("Choose a new PIN", 3000));
+  pump (100);
+  g_assert_nonnull (jr_window_get_day_view (win));
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  pump (100);
+  view = gtk_window_get_child (GTK_WINDOW (win));
+  type_pin (view, "246810");
+  g_assert_true (wait_unlocked (j, 3000));
 
   gtk_window_close (GTK_WINDOW (win));
   pump (100);
   jr_secret_free (recovery);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
+static void
+set_raw_setting (const char *path, const char *key, const char *value)
+{
+  sqlite3 *db;
+  sqlite3_stmt *st;
+  g_assert_cmpint (sqlite3_open (path, &db), ==, SQLITE_OK);
+  sqlite3_prepare_v2 (db, value ? "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)"
+                                : "DELETE FROM settings WHERE key = ?1", -1, &st, NULL);
+  sqlite3_bind_text (st, 1, key, -1, SQLITE_STATIC);
+  if (value != NULL)
+    sqlite3_bind_text (st, 2, value, -1, SQLITE_STATIC);
+  g_assert_cmpint (sqlite3_step (st), ==, SQLITE_DONE);
+  sqlite3_finalize (st);
+  sqlite3_close (db);
+}
+
+static char *
+raw_setting (const char *path, const char *key)
+{
+  sqlite3 *db;
+  sqlite3_stmt *st;
+  char *value = NULL;
+  g_assert_cmpint (sqlite3_open (path, &db), ==, SQLITE_OK);
+  sqlite3_prepare_v2 (db, "SELECT value FROM settings WHERE key = ?1", -1, &st, NULL);
+  sqlite3_bind_text (st, 1, key, -1, SQLITE_STATIC);
+  if (sqlite3_step (st) == SQLITE_ROW)
+    value = g_strdup ((const char *) sqlite3_column_text (st, 0));
+  sqlite3_finalize (st);
+  sqlite3_close (db);
+  return value;
+}
+
+/* A PIN journal saved by the earlier version (PIN only, no master
+ * passphrase, no keyring secret) opens with its PIN, then must get a
+ * master passphrase before anything else; closing that dialog locks. */
+static void
+test_ui_master_upgrade (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  load_style ();
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+  JrJournal *j = open_journal (path);
+  jr_journal_add_entry (j, "2026-10-06", 1791316800, "written before the update", 1791316800);
+  jr_journal_close (j);
+  /* Save it the old way. */
+  char *plain = raw_setting (path, "key_plain");
+  JrKey *key = jr_key_import (plain);
+  g_autofree char *wrapped = jr_key_wrap (key, "123456", FAST);
+  set_raw_setting (path, "key_pin", wrapped);
+  set_raw_setting (path, "key_plain", NULL);
+  jr_key_free (key);
+  jr_secret_free (plain);
+
+  j = open_journal (path);
+  g_assert_true (jr_journal_needs_master (j));
+  JrWindow *win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (200);
+  GtkWidget *view = gtk_window_get_child (GTK_WINDOW (win));
+  g_assert_null (find_button (view, "Forgot PIN? Use master passphrase")); /* none yet */
+  type_pin (view, "123456");
+  g_assert_true (wait_unlocked (j, 3000));
+  GtkWindow *dlg = find_toplevel ("Set a master passphrase");
+  g_assert_nonnull (dlg);
+  shot (GTK_WIDGET (dlg), "05g-set-master");
+
+  /* Closing it locks again. */
+  gtk_window_close (dlg);
+  for (int waited = 0; jr_journal_is_unlocked (j) && waited < 3000; waited += 20)
+    pump (20);
+  g_assert_false (jr_journal_is_unlocked (j));
+
+  /* PIN once more, then the master passphrase twice. */
+  view = gtk_window_get_child (GTK_WINDOW (win));
+  type_pin (view, "123456");
+  g_assert_true (wait_unlocked (j, 3000));
+  dlg = find_toplevel ("Set a master passphrase");
+  type_pin (GTK_WIDGET (dlg), "123456");
+  enter_text (find_password (GTK_WIDGET (dlg)), MASTER);
+  enter_text (find_password (GTK_WIDGET (dlg)), MASTER);
+  g_assert_true (dialog_gone ("Set a master passphrase", 3000));
+  pump (100);
+  g_assert_false (jr_journal_needs_master (j));
+  g_assert_nonnull (jr_window_get_day_view (win));
+
+  /* The PIN now needs the keyring: the file alone does not open with it. */
+  g_autofree char *bound = raw_setting (path, "key_pin");
+  JrKey *alone = jr_key_unwrap_for (bound, "123456", NULL);
+  g_assert_null (alone);
+
+  /* And the master passphrase opens it. */
+  jr_window_lock (win, JR_LOCK_MANUAL);
+  pump (100);
+  view = gtk_window_get_child (GTK_WINDOW (win));
+  g_signal_emit_by_name (find_button (view, "Forgot PIN? Use master passphrase"), "clicked");
+  pump (50);
+  enter_text (find_password (view), MASTER);
+  g_assert_true (wait_unlocked (j, 3000));
+  g_assert_nonnull (jr_window_get_day_view (win));
+
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
   g_remove (path);
   g_rmdir (dir);
 }
@@ -843,7 +1064,7 @@ test_ui_day_dropdown (void)
     }
   g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
   g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
-  JrJournal *j = jr_journal_open (path, NULL);
+  JrJournal *j = open_journal (path);
   seed (j);
   JrWindow *win = jr_window_new (NULL, j);
   gtk_window_present (GTK_WINDOW (win));
@@ -905,6 +1126,10 @@ main (int argc, char **argv)
   g_test_add_func ("/ui/long-entry", test_ui_long_entry);
   g_test_add_func ("/ui/passphrase", test_ui_passphrase);
   g_test_add_func ("/ui/pin-lock-screen", test_ui_pin_lock_screen);
+  g_test_add_func ("/ui/master-upgrade", test_ui_master_upgrade);
   g_test_add_func ("/ui/day-dropdown", test_ui_day_dropdown);
-  return g_test_run ();
+  int rc = g_test_run ();
+  if (keyring != NULL)
+    g_hash_table_unref (keyring);
+  return rc;
 }

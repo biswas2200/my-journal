@@ -6,6 +6,7 @@
 #include <gtk/gtk.h>
 #include "harden.h"
 #include "journal.h"
+#include "keyring.h"
 #include "window.h"
 
 #define APP_ID "io.github.biswas2200.Journal"
@@ -70,6 +71,7 @@ on_activate (GApplication *app)
       g_error_free (error);
       return;
     }
+  jr_journal_set_device_store (journal, jr_keyring_store ());
   gtk_window_present (GTK_WINDOW (jr_window_new (GTK_APPLICATION (app), journal)));
 }
 

@@ -18,17 +18,20 @@ no accounts, no telemetry, no sync.
    days written, total time, average per day, entries, and the last 7
    days as a bar chart. Minutes count only while typing and pause after
    60 seconds idle. An empty day is just empty: no streaks, no "missed".
-4. **Lock.** Optional 6-digit PIN or, stronger, a passphrase (12 or more
-   characters). It locks when the app closes and when the laptop sleeps
-   or the lid closes. After 5 wrong tries it waits 30 seconds, and a
-   restart does not reset that wait.
+4. **Lock.** Optional: a passphrase (12 or more characters), or a 6-digit
+   PIN together with a master passphrase. It locks when the app closes
+   and when the laptop sleeps or the lid closes. After 5 wrong PINs the
+   PIN is blocked: only the master passphrase (or the recovery key) opens
+   the journal, and then a new PIN, different from the old one, must be
+   chosen. After 5 wrong passphrases it waits 30 seconds. A restart
+   resets neither.
 5. **Dark, monochrome theme** that uses only system fonts.
 
 ## Build and install
 
 ```bash
 sudo apt install build-essential meson ninja-build pkg-config \
-  libgtk-4-dev libsqlite3-dev libsodium-dev
+  libgtk-4-dev libsqlite3-dev libsodium-dev libsecret-1-dev
 meson setup build
 meson compile -C build
 meson test -C build            # unit + UI tests
@@ -63,27 +66,43 @@ type it and press Enter.
   `secretbox` (XSalsa20-Poly1305). Dates, stamp times and minutes are not
   secret and stay readable, so the Activity screen never decrypts text.
 - With a lock set, the data key is never stored in the clear. It is
-  stored twice, wrapped with keys derived by **Argon2id** (10 passes,
-  256 MiB, random salt): once from the PIN or passphrase, once from the
-  **recovery key**. A wrong secret fails authentication, so the wrapped
+  stored wrapped with keys derived by **Argon2id** (10 passes, 256 MiB,
+  random salt): from the PIN or passphrase, from the master passphrase
+  (PIN locks), and from the **recovery key**. A wrong secret fails authentication, so the wrapped
   key also serves as the salted Argon2id check. The PIN or passphrase
   itself is never stored, not even hashed. Keys saved with an older,
   weaker setting are re-saved with the current one the next time they
   unlock.
-- **PIN or passphrase.** A 6-digit PIN has a million values; with each
-  guess costing ~0.9 s and 256 MiB, someone with a copy of the file could
-  still try them all in about a day on a 12-core laptop. A passphrase of
-  12+ characters (a few random words) has far too many possibilities for
-  that. Passphrases are Unicode-normalized, so the same words typed with
-  a different keyboard layout or input method still match.
+- **PIN and master passphrase.** A 6-digit PIN has only a million values,
+  so on its own it could be guessed from a copy of the file. Two things
+  close that:
+  - The PIN's key also needs a 32-byte **device secret** kept in your
+    login keyring (GNOME Keyring, via libsecret; it shows in Passwords
+    and Keys as "Journal PIN key"). The key-encryption key is BLAKE2b
+    keyed with that secret over Argon2id(PIN), so a copy of the file
+    alone gives nothing to test PIN guesses against. The keyring is
+    locked by your login password, so that password now guards the PIN
+    path; anyone using your logged-in session can read the keyring, as
+    they could anything else in it.
+  - **5 wrong PINs block the PIN.** No timer brings it back. Only the
+    master passphrase or the recovery key opens the journal then, and a
+    new PIN must be chosen first (not the blocked one). Until then no
+    entry opens. Wrong PINs typed while changing the lock count too, and
+    the 5th locks the journal at once.
+  A PIN set by an earlier version is asked for a master passphrase on
+  the next unlock; that also moves the PIN onto the keyring.
+- **Passphrase.** 12+ characters (a few random words) have far too many
+  possibilities to guess even from a copy of the file. Passphrases are
+  Unicode-normalized, so the same words typed with a different keyboard
+  layout or input method still match.
 - The **recovery key** (`XXXX-XXXX-XXXX-XXXX-XXXX-XXXX`, 120 random bits)
   is shown once when the lock is set, or when you ask for a new one. It
   cannot be copied or selected, so it never reaches the clipboard: write
-  it down. It unlocks in place of the PIN or passphrase. If you lose both,
-  the entries cannot be read by anyone, including you.
+  it down. It unlocks in place of any other secret. If you lose all of
+  them, the entries cannot be read by anyone, including you.
 - Changing or turning off the lock, or making a new recovery key, asks
-  for the current PIN or passphrase first, and wrong ones count toward
-  the 5-try lockout. The slow work runs on a background thread on copies;
+  for the current PIN, passphrase or master passphrase first, and wrong
+  ones count (5 wrong PINs block the PIN). The slow work runs on a background thread on copies;
   if the journal locks meanwhile (lid closed), nothing is applied.
 - Without a lock the data key is stored next to the data. That only keeps
   text out of casual view in tools like `strings`; it is not protection.

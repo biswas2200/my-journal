@@ -45,6 +45,8 @@ core_dep = declare_dependency(
 
 # App
 gtk_dep = dependency('gtk4', version : '>= 4.12')
+# The login keyring, which holds the secret a PIN needs (see keyring.h).
+secret_dep = dependency('libsecret-1', version : '>= 0.20')
 gnome = import('gnome')
 resources = gnome.compile_resources('journal-resources',
   'data/journal.gresource.xml',
@@ -56,6 +58,7 @@ ui_src = files(
   'src/ui/lock_view.c',
   'src/ui/day_view.c',
   'src/ui/day_popover.c',
+  'src/ui/keyring.c',
   'src/ui/activity_view.c',
   'src/ui/bar_chart.c',
   'src/ui/security_view.c',
@@ -64,13 +67,13 @@ ui_src = files(
   'src/ui/widgets.c',
 )
 ui_lib = static_library('journal-ui', ui_src, resources[1],
-  dependencies : [core_dep, gtk_dep],
+  dependencies : [core_dep, gtk_dep, secret_dep],
 )
 ui_dep = declare_dependency(
   link_with : ui_lib,
   sources : resources,  # compiled into each program so they always register
   include_directories : include_directories('src/ui'),
-  dependencies : [core_dep, gtk_dep],
+  dependencies : [core_dep, gtk_dep, secret_dep],
 )
 journal_exe = executable('journal', 'src/main.c',
   dependencies : ui_dep,

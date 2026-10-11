@@ -48,7 +48,9 @@ show_step (SecretDialog *d)
   gtk_widget_set_visible (d->dots, pin);
   gtk_widget_set_visible (d->entry, !pin);
   jr_pin_dots_set (d->dots, d->count);
-  if (pin)
+  if (s->hint != NULL)
+    gtk_label_set_text (GTK_LABEL (d->hint), s->hint);
+  else if (pin)
     gtk_label_set_text (GTK_LABEL (d->hint), "Type the digits on your keyboard.");
   else if (s->is_new)
     gtk_label_set_text (GTK_LABEL (d->hint),
@@ -302,9 +304,10 @@ jr_lock_kind_dialog_show (JrWindow *parent, JrKindChosen chosen)
                                "12 or more characters, typed and Enter. Too many possibilities "
                                "to guess, even if someone copies the file."));
   gtk_box_append (GTK_BOX (box),
-                  kind_button (dialog, JR_LOCK_PIN, "6-digit PIN",
-                               "Quick to type. Stops casual snooping, but someone with a copy "
-                               "of the file could guess it in about a day."));
+                  kind_button (dialog, JR_LOCK_PIN, "6-digit PIN and a master passphrase",
+                               "Quick to type every day. After 5 wrong PINs only the master "
+                               "passphrase opens it. The PIN works only with this laptop's "
+                               "login keyring, so a copy of the file cannot be opened with it."));
   GtkWidget *cancel = gtk_button_new_with_label ("Cancel");
   gtk_widget_set_halign (cancel, GTK_ALIGN_END);
   gtk_widget_set_margin_top (cancel, 8);
@@ -343,9 +346,9 @@ jr_recovery_dialog_show (JrWindow *parent, const char *key)
 
   gtk_box_append (GTK_BOX (box), jr_label ("Your recovery key", "dialog-title", NULL));
   GtkWidget *text = jr_label ("Write it down on paper and keep it somewhere safe. It is shown "
-                              "only this once and cannot be copied. If you forget your PIN or "
-                              "passphrase, this key opens your entries. Without either, nobody "
-                              "can read them.",
+                              "only this once and cannot be copied. If you forget everything "
+                              "else, this key opens your entries. Without a secret you know or "
+                              "this key, nobody can read them.",
                               "muted", "mono", NULL);
   gtk_label_set_wrap (GTK_LABEL (text), TRUE);
   gtk_label_set_max_width_chars (GTK_LABEL (text), 52);

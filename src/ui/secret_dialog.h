@@ -14,12 +14,13 @@
 #include "vault.h"
 #include "window.h"
 
-#define JR_SECRET_DIALOG_MAX_STEPS 3
+#define JR_SECRET_DIALOG_MAX_STEPS 5
 
 typedef struct {
   const char *prompt;
   JrLockKind  kind;
   gboolean    is_new; /* a new secret: check the rules before moving on */
+  const char *hint;   /* shown under the field; NULL for the usual one */
 } JrSecretStep;
 
 typedef void (*JrSecretDone) (GtkWindow *dialog, const char *const *secrets, gpointer user);
