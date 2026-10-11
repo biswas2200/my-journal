@@ -118,7 +118,7 @@ jobs:
             libsqlite3-dev libsodium-dev libsecret-1-dev
 
       - name: Restore what earlier runs found
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: fuzz-corpus/${{ matrix.target }}
           key: fuzz-${{ matrix.target }}-${{ github.run_id }}
@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload the crashing input
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crash-${{ matrix.target }}
           path: fuzz-crashes/
