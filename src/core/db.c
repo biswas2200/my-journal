@@ -10,6 +10,7 @@
 #include <sqlite3.h>
 
 #define JR_DB_ERROR (g_quark_from_static_string ("jr-db-error"))
+#define JR_DB_VERSION 1 /* PRAGMA user_version; SCHEMA sets it */
 
 /* Every statement is prepared once at open and reused, so steady-state
  * use allocates nothing. Order must match SQL[] below. */
@@ -87,7 +88,9 @@ struct JrDb {
 };
 
 /* Creates the parent folder (0700) and an empty file (0600) so SQLite
- * never creates the journal world-readable under a lax umask. */
+ * never creates the journal world-readable under a lax umask. A file
+ * that others can read (made by hand, copied or restored) is made
+ * private: it holds dates, times and settings in the clear. */
 static gboolean
 prepare_file (const char *path, GError **error)
 {
@@ -105,8 +108,34 @@ prepare_file (const char *path, GError **error)
       g_set_error (error, JR_DB_ERROR, 1, "Cannot open %s: %s", path, g_strerror (e));
       return FALSE;
     }
+  struct stat st;
+  if (fstat (fd, &st) == 0 && (st.st_mode & 077) != 0 && fchmod (fd, 0600) != 0)
+    {
+      int e = errno;
+      g_set_error (error, JR_DB_ERROR, 1, "Cannot make %s private: %s", path, g_strerror (e));
+      close (fd);
+      return FALSE;
+    }
   close (fd);
   return TRUE;
+}
+
+/* PRAGMA user_version of the file; 0 for a new one. */
+static int
+read_version (sqlite3 *handle, int *version)
+{
+  sqlite3_stmt *s;
+  int rc = sqlite3_prepare_v2 (handle, "PRAGMA user_version", -1, &s, NULL);
+  if (rc != SQLITE_OK)
+    return rc;
+  rc = sqlite3_step (s);
+  if (rc == SQLITE_ROW)
+    {
+      *version = sqlite3_column_int (s, 0);
+      rc = SQLITE_OK;
+    }
+  sqlite3_finalize (s);
+  return rc;
 }
 
 JrDb *
@@ -122,6 +151,19 @@ jr_db_open (const char *path, GError **error)
                             NULL);
   if (rc == SQLITE_OK)
     rc = sqlite3_exec (db->handle, PRAGMAS, NULL, NULL, NULL);
+  int version = 0;
+  if (rc == SQLITE_OK)
+    rc = read_version (db->handle, &version);
+  if (rc == SQLITE_OK && version > JR_DB_VERSION)
+    {
+      /* Never rewrite a file this version does not understand. */
+      g_set_error (error, JR_DB_ERROR, 2,
+                   "This journal was made by a newer version of Journal (file version %d; "
+                   "this one reads up to %d). Install the newer version to open it.",
+                   version, JR_DB_VERSION);
+      jr_db_close (db);
+      return NULL;
+    }
   if (rc == SQLITE_OK)
     rc = sqlite3_exec (db->handle, SCHEMA, NULL, NULL, NULL);
   for (int i = 0; rc == SQLITE_OK && i < ST_COUNT; i++)
@@ -157,6 +199,43 @@ stmt (JrDb *db, int which)
   sqlite3_reset (s);
   sqlite3_clear_bindings (s);
   return s;
+}
+
+/* For the foreach functions. A callback may run the same query again;
+ * the shared statement is still stepping then, so that call gets a
+ * statement of its own (resetting the shared one would restart the
+ * outer loop). */
+static sqlite3_stmt *
+query (JrDb *db, int which, sqlite3_stmt **own)
+{
+  *own = NULL;
+  if (!sqlite3_stmt_busy (db->st[which]))
+    return stmt (db, which);
+  if (sqlite3_prepare_v2 (db->handle, SQL[which], -1, own, NULL) != SQLITE_OK)
+    return NULL;
+  return *own;
+}
+
+/* Ends a query: SQLITE_DONE if every row was read. */
+static int
+query_done (sqlite3_stmt *s, sqlite3_stmt *own, int rc)
+{
+  if (own != NULL)
+    sqlite3_finalize (own);
+  else
+    {
+      sqlite3_reset (s);
+      sqlite3_clear_bindings (s);
+    }
+  return rc;
+}
+
+/* A NULL pointer would bind SQL NULL, which the table refuses; an empty
+ * body is a zero-length blob. */
+static void
+bind_body (sqlite3_stmt *s, int col, const void *body, gsize len)
+{
+  sqlite3_bind_blob64 (s, col, body != NULL ? body : "", body != NULL ? len : 0, SQLITE_STATIC);
 }
 
 static gboolean
@@ -219,7 +298,7 @@ jr_db_insert_entry (JrDb *db, const char *day, gint64 stamped_at,
   sqlite3_stmt *s = stmt (db, ST_INSERT_ENTRY);
   sqlite3_bind_text (s, 1, day, -1, SQLITE_STATIC);
   sqlite3_bind_int64 (s, 2, stamped_at);
-  sqlite3_bind_blob64 (s, 3, body, len, SQLITE_STATIC);
+  bind_body (s, 3, body, len);
   sqlite3_bind_int64 (s, 4, now);
   if (!done (db, s))
     return 0;
@@ -231,7 +310,7 @@ jr_db_update_entry (JrDb *db, gint64 id, const void *body, gsize len, gint64 now
 {
   sqlite3_stmt *s = stmt (db, ST_UPDATE_ENTRY);
   sqlite3_bind_int64 (s, 1, id);
-  sqlite3_bind_blob64 (s, 2, body, len, SQLITE_STATIC);
+  bind_body (s, 2, body, len);
   sqlite3_bind_int64 (s, 3, now);
   return done (db, s) && sqlite3_changes (db->handle) == 1;
 }
@@ -247,19 +326,22 @@ jr_db_delete_entry (JrDb *db, gint64 id)
 gboolean
 jr_db_foreach_entry (JrDb *db, const char *day, JrDbEntryFunc fn, gpointer user)
 {
-  sqlite3_stmt *s = stmt (db, ST_DAY_ENTRIES);
+  sqlite3_stmt *own, *s = query (db, ST_DAY_ENTRIES, &own);
+  if (s == NULL)
+    return FALSE;
   sqlite3_bind_text (s, 1, day, -1, SQLITE_STATIC);
   int rc;
   while ((rc = sqlite3_step (s)) == SQLITE_ROW)
     fn (sqlite3_column_int64 (s, 0), sqlite3_column_int64 (s, 1),
         sqlite3_column_blob (s, 2), (gsize) sqlite3_column_bytes (s, 2), user);
-  sqlite3_reset (s);
-  return rc == SQLITE_DONE;
+  return query_done (s, own, rc) == SQLITE_DONE;
 }
 
 gboolean
 jr_db_add_active_seconds (JrDb *db, const char *day, gint64 seconds)
 {
+  if (seconds <= 0) /* nothing to add; never take time away */
+    return TRUE;
   sqlite3_stmt *s = stmt (db, ST_ADD_SECONDS);
   sqlite3_bind_text (s, 1, day, -1, SQLITE_STATIC);
   sqlite3_bind_int64 (s, 2, seconds);
@@ -279,26 +361,28 @@ jr_db_active_seconds (JrDb *db, const char *day)
 gboolean
 jr_db_foreach_day (JrDb *db, const char *from, const char *to, JrDbDayFunc fn, gpointer user)
 {
-  sqlite3_stmt *s = stmt (db, ST_DAY_SUMMARY);
+  sqlite3_stmt *own, *s = query (db, ST_DAY_SUMMARY, &own);
+  if (s == NULL)
+    return FALSE;
   sqlite3_bind_text (s, 1, from, -1, SQLITE_STATIC);
   sqlite3_bind_text (s, 2, to, -1, SQLITE_STATIC);
   int rc;
   while ((rc = sqlite3_step (s)) == SQLITE_ROW)
     fn ((const char *) sqlite3_column_text (s, 0), sqlite3_column_int (s, 1),
         sqlite3_column_int64 (s, 2), user);
-  sqlite3_reset (s);
-  return rc == SQLITE_DONE;
+  return query_done (s, own, rc) == SQLITE_DONE;
 }
 
 gboolean
 jr_db_foreach_month (JrDb *db, const char *before_month, JrDbMonthFunc fn, gpointer user)
 {
-  sqlite3_stmt *s = stmt (db, ST_MONTHS);
+  sqlite3_stmt *own, *s = query (db, ST_MONTHS, &own);
+  if (s == NULL)
+    return FALSE;
   /* "YYYY-MM" sorts before every "YYYY-MM-DD" of that month. */
   sqlite3_bind_text (s, 1, before_month, -1, SQLITE_STATIC);
   int rc;
   while ((rc = sqlite3_step (s)) == SQLITE_ROW)
     fn ((const char *) sqlite3_column_text (s, 0), sqlite3_column_int (s, 1), user);
-  sqlite3_reset (s);
-  return rc == SQLITE_DONE;
+  return query_done (s, own, rc) == SQLITE_DONE;
 }

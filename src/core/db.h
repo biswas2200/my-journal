@@ -12,7 +12,9 @@
 typedef struct JrDb JrDb;
 
 /* Opens (creating if needed) the database at `path`, or ":memory:".
- * A new file gets mode 0600 and a new parent folder 0700. */
+ * A new file gets mode 0600 and a new parent folder 0700; an existing
+ * file others could read is made 0600. A file made by a newer version
+ * is refused and left untouched. */
 JrDb    *jr_db_open             (const char *path, GError **error);
 void     jr_db_close            (JrDb *db);
 
@@ -25,18 +27,21 @@ char    *jr_db_get_setting      (JrDb *db, const char *key);
 gboolean jr_db_set_setting      (JrDb *db, const char *key, const char *value);
 gboolean jr_db_delete_setting   (JrDb *db, const char *key);
 
-/* Returns the new row id, or 0 on failure. `body` may hold any bytes. */
+/* Returns the new row id, or 0 on failure. `body` may hold any bytes;
+ * NULL (length 0) is stored as an empty body. */
 gint64   jr_db_insert_entry     (JrDb *db, const char *day, gint64 stamped_at,
                                  const void *body, gsize len, gint64 now);
 gboolean jr_db_update_entry     (JrDb *db, gint64 id, const void *body, gsize len, gint64 now);
 gboolean jr_db_delete_entry     (JrDb *db, gint64 id);
 
-/* `body` is only valid during the call. */
+/* `body` is only valid during the call (NULL when empty). Callbacks of
+ * every foreach may call any db function, the same query included. */
 typedef void (*JrDbEntryFunc) (gint64 id, gint64 stamped_at, const void *body, gsize len,
                                gpointer user);
 /* Entries of one day, oldest stamp first. */
 gboolean jr_db_foreach_entry    (JrDb *db, const char *day, JrDbEntryFunc fn, gpointer user);
 
+/* Zero or negative seconds are ignored. */
 gboolean jr_db_add_active_seconds (JrDb *db, const char *day, gint64 seconds);
 gint64   jr_db_active_seconds     (JrDb *db, const char *day);
 
