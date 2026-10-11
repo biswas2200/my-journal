@@ -302,3 +302,7 @@ tests/      unit tests and the UI test
   asks for when it wraps text during allocation, so the day view checks
   each block's height against its laid-out text for the first frames
   after opening and corrects it.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -1,7 +1,8 @@
 project('journal', 'c',
   version : '1.0.0',
   license : 'MIT',
-  meson_version : '>= 1.0',
+  license_files : 'LICENSE',
+  meson_version : '>= 1.1',
   default_options : [
     'c_std=c11',
     'warning_level=2',   # -Wall -Wextra
