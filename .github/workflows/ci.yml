@@ -82,9 +82,13 @@ jobs:
 
       - name: Core tests (leak detection on)
         run: meson test -C build-asan --suite core --print-errorlogs
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1 # undefined behaviour fails the test
 
       - name: UI tests (GTK keeps global caches, so leak detection off)
         run: ASAN_OPTIONS=detect_leaks=0 meson test -C build-asan --suite ui --print-errorlogs
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
 
       - name: Report failures
         if: failure()
@@ -93,3 +97,45 @@ jobs:
           grep -hE 'error:|ERROR|Dependency .* found: NO|warning:' build-setup.log build.log 2>/dev/null \
             | head -25 | sed 's/^/::error::/' || true
           grep -hE '^not ok|ERROR:' build-asan/meson-logs/testlog.txt 2>/dev/null | head -20 | sed 's/^/::error::/' || true
+
+  fuzz:
+    # Coverage-guided fuzzing with libFuzzer (clang), 2 minutes per target
+    # on every push. What it learns is cached for the next run; a crash
+    # fails the job and its input is uploaded (see fuzz/README.md).
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [date, text, lockout, secrets, journal_file]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build pkg-config clang libgtk-4-dev \
+            libsqlite3-dev libsodium-dev libsecret-1-dev
+
+      - name: Restore what earlier runs found
+        uses: actions/cache@v4
+        with:
+          path: fuzz-corpus/${{ matrix.target }}
+          key: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-${{ matrix.target }}-
+
+      - name: Build with libFuzzer, AddressSanitizer and UndefinedBehaviorSanitizer
+        run: |
+          CC=clang meson setup build-fuzz -Dfuzz=true -Db_sanitize=address,undefined \
+            -Db_lundef=false -Dbuildtype=debugoptimized -Dwerror=false
+          meson compile -C build-fuzz fuzz_${{ matrix.target }}
+
+      - name: Fuzz for 2 minutes
+        run: tools/fuzz.sh ${{ matrix.target }} 120
+
+      - name: Upload the crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz-crashes/

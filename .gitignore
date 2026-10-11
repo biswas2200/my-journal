@@ -4,3 +4,6 @@
 *.swp
 vgcore.*
 /.scannerwork/
+/fuzz-corpus/
+/fuzz-crashes/
+crash-*.bin

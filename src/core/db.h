@@ -45,13 +45,16 @@ gboolean jr_db_foreach_entry    (JrDb *db, const char *day, JrDbEntryFunc fn, gp
 gboolean jr_db_add_active_seconds (JrDb *db, const char *day, gint64 seconds);
 gint64   jr_db_active_seconds     (JrDb *db, const char *day);
 
-/* Days in [from, to] that have entries or counted time, ascending. */
+/* Days in [from, to] that have entries or counted time, ascending. The
+ * day is never NULL; a damaged file may still give one that is not a
+ * real day or not in the range, so callers check it. */
 typedef void (*JrDbDayFunc) (const char *day, int entries, gint64 seconds, gpointer user);
 gboolean jr_db_foreach_day      (JrDb *db, const char *from, const char *to,
                                  JrDbDayFunc fn, gpointer user);
 
 /* Months ("YYYY-MM") strictly before `before_month` with at least one entry,
- * newest first, with the number of distinct days written. */
+ * newest first, with the number of distinct days written. Never NULL; a
+ * damaged file may give one that is not a real month. */
 typedef void (*JrDbMonthFunc) (const char *month, int days_written, gpointer user);
 gboolean jr_db_foreach_month    (JrDb *db, const char *before_month,
                                  JrDbMonthFunc fn, gpointer user);

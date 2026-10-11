@@ -18,6 +18,14 @@ add_project_arguments(
   '-DG_LOG_DOMAIN="journal"',
   language : 'c',
 )
+if get_option('fuzz')
+  if cc.get_id() != 'clang'
+    error('-Dfuzz=true needs clang: CC=clang meson setup build-fuzz -Dfuzz=true')
+  endif
+  # libFuzzer is guided by coverage of all our code, not just the targets;
+  # undefined behaviour stops the run like a crash.
+  add_project_arguments('-fsanitize=fuzzer-no-link', '-fno-sanitize-recover=all', language : 'c')
+endif
 
 glib_dep = dependency('glib-2.0', version : '>= 2.76')
 sqlite_dep = dependency('sqlite3', version : '>= 3.35')
@@ -93,3 +101,4 @@ gnome.post_install(
 )
 
 subdir('tests')
+subdir('fuzz')

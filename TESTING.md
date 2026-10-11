@@ -91,6 +91,16 @@ build/tests/test_jdate --verbose
 | `vault` | 8 tables, 157 cases (PIN, passphrase and recovery-key rules; every kind of damage to a saved key; device-bound keys incl. an edited version tag; sealing and tampering; 10 MB entry) | 300 random keys and secrets with damage, 2,000 recovery keys typed messily, 2,000 random texts sealed and bit-flipped |
 | `journal` | 30 scenarios, 248 checked steps, written like LeetCode's "design a class" problems (operations in, outputs expected) | 150 random action sequences with right and wrong secrets, restarts and keyring trouble: entries open exactly when allowed, a copy of the file never opens with the PIN, and the owner always gets back in |
 
+### Fuzzing
+
+Five fuzz targets ([`fuzz/`](fuzz/README.md)) take input that does not
+come from this program: typed dates, any text, the saved wrong-try
+state, typed secrets and saved keys, and whole (possibly damaged)
+journal files. On GitHub each runs for two minutes per push under
+libFuzzer with AddressSanitizer and UBSan, keeping what it learns
+between runs. Every normal test run replays the seeds and every input
+that ever found a bug (`meson test -C build --suite fuzz`).
+
 ## Manual checks
 
 Tick each one and note the date and build. Expected results are in

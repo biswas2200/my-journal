@@ -368,8 +368,12 @@ jr_db_foreach_day (JrDb *db, const char *from, const char *to, JrDbDayFunc fn, g
   sqlite3_bind_text (s, 2, to, -1, SQLITE_STATIC);
   int rc;
   while ((rc = sqlite3_step (s)) == SQLITE_ROW)
-    fn ((const char *) sqlite3_column_text (s, 0), sqlite3_column_int (s, 1),
-        sqlite3_column_int64 (s, 2), user);
+    {
+      /* A damaged index can lead to a row with no day: skip it. */
+      const char *day = (const char *) sqlite3_column_text (s, 0);
+      if (day != NULL)
+        fn (day, sqlite3_column_int (s, 1), sqlite3_column_int64 (s, 2), user);
+    }
   return query_done (s, own, rc) == SQLITE_DONE;
 }
 
@@ -383,6 +387,10 @@ jr_db_foreach_month (JrDb *db, const char *before_month, JrDbMonthFunc fn, gpoin
   sqlite3_bind_text (s, 1, before_month, -1, SQLITE_STATIC);
   int rc;
   while ((rc = sqlite3_step (s)) == SQLITE_ROW)
-    fn ((const char *) sqlite3_column_text (s, 0), sqlite3_column_int (s, 1), user);
+    {
+      const char *month = (const char *) sqlite3_column_text (s, 0);
+      if (month != NULL) /* as for days: never hand on a missing one */
+        fn (month, sqlite3_column_int (s, 1), user);
+    }
   return query_done (s, own, rc) == SQLITE_DONE;
 }

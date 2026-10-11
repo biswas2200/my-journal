@@ -213,6 +213,7 @@ persisted across restarts). The manual checklist is in
 | Valgrind memcheck | 0 errors, 0 leaks | see Tests |
 | Line coverage | 89.4% overall, 94.8% in `src/core` | `tools/coverage.sh` |
 | Compiler warnings | `-Wall -Wextra -Werror`, none | every build |
+| Fuzzing (libFuzzer + ASan + UBSan on GitHub, 5 targets) | 1 bug found and fixed (a damaged file could hand the calendar a missing day) | [`fuzz/README.md`](fuzz/README.md) |
 
 What a crash can and cannot lose: entries are saved about a second
 after you stop typing, and on blur, lock and quit. SQLite runs with
@@ -283,6 +284,7 @@ src/ui/     GTK4
   sleep_watch logind PrepareForSleep
 data/       stylesheet, icons, .desktop file
 tests/      unit tests and the UI test
+fuzz/       fuzz targets, their seeds, and every input that found a bug
 ```
 
 ## Decisions worth knowing
