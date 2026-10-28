@@ -239,14 +239,14 @@ persisted across restarts). The manual checklist is in
 
 | Check | Result (28 Oct 2026) | How |
 | --- | --- | --- |
-| Unit, UI and integration tests | 20 suites, all pass | `meson test -C build` |
+| Unit, UI and integration tests | 21 suites, all pass | `meson test -C build` |
 | Network jail: every non-local socket family, random and 64-bit domains, a real TCP listener that must receive nothing, io_uring, x32, threads, child programs | all refused | `tests/test_netjail.c` |
 | AppArmor profile, probed from outside without the jail | TCP, UDP, IPv6, DNS via resolved and the link portal refused | `tools/check-apparmor.sh` |
 | Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |
 | Static analysis (GCC `-fanalyzer`) | 0 findings in app and tests | `tools/analyze.sh` |
 | AddressSanitizer + UndefinedBehaviorSanitizer | clean | see Tests |
 | Valgrind memcheck | 0 errors, 0 leaks | see Tests |
-| Line coverage | 89.4% overall, 94.8% in `src/core` | `tools/coverage.sh` |
+| Line coverage | 89.3% overall (Journal, Notes and the start screen) | `tools/coverage.sh` |
 | Compiler warnings | `-Wall -Wextra -Werror`, none | every build |
 | Fuzzing (libFuzzer + ASan + UBSan on GitHub, 5 targets) | 1 bug found and fixed (a damaged file could hand the calendar a missing day) | [`fuzz/README.md`](fuzz/README.md) |
 

@@ -35,3 +35,8 @@ test('hardened', find_program('run-headless.sh'),
 test('launcher', find_program('run-headless.sh'),
      args : [files('check-launcher.sh'), launcher_exe],
      suite : 'ui', timeout : 120)
+
+# The real Notes program, alone and under the real start screen.
+test('notes', find_program('run-headless.sh'),
+     args : [files('check-notes.sh'), notes_exe, launcher_exe],
+     suite : 'ui', timeout : 60)

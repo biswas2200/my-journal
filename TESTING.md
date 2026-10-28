@@ -49,6 +49,7 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | The whole Journal UI runs inside the jail and never even tries the network (0 blocked calls over every UI test) | `ui` (main) |
 | Hand-over: exit codes 0/10/11/12 mean quit/Home/Notes/Journal; any other code or signal returns to the start screen with an error; SIGTERM/SIGINT quit | `core/programs` (table, plus every code and signal) |
 | Start screen: Journal → Notes → quit, Notes → Journal, Home, a crash, logout while a program runs (it gets SIGTERM first), bad `--open` | `launcher` (stand-in programs) |
+| Notes opens, runs as the start screen's child, and closes cleanly on logout (the launcher waits for it) | `notes` |
 | Home and Notes on every screen (lock screen too) only when the launcher started the Journal; leaving saves, locks and closes; the next visit starts locked | `/ui/leave` |
 | Reopened entries are exactly as tall as their text, also after the window changes width; "New stamped entry" sits right under them | `/ui/saved-entries-fit` |
 | Crash during saving (SIGKILL at random moments): no lost acknowledged save, file intact | `crash` (`/crash/entries-survive-kill`) |

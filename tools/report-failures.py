@@ -2,15 +2,19 @@
 (annotations are readable without signing in, unlike job logs), with the
 last lines of its output, so script tests without "not ok" lines show too.
 
-  python3 -I tools/report-failures.py build*/meson-logs/testlog.json
+Reads build*/meson-logs/testlog.json under the project root and nothing
+else; it takes no arguments.
+
+  python3 -I tools/report-failures.py
 """
 import json
-import sys
+from pathlib import Path
 
+root = Path(__file__).resolve().parent.parent
 shown = 0
-for path in sys.argv[1:]:
+for path in sorted(root.glob("build*/meson-logs/testlog.json")):
     try:
-        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         continue
     for line in lines:
