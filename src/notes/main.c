@@ -17,8 +17,8 @@ static const char CSS[] =
   "window, .background { background: #111111; color: #EDEDED; }"
   "headerbar { background: #1A1A1A; box-shadow: none; border-bottom: 1px solid #2A2A2A; }"
   ".title-text { font-family: monospace; color: #CFCFCF; }"
-  "headerbar button { background: #1C1C1C; color: #EDEDED; border: 1px solid #333333; box-shadow: none; }"
-  "headerbar button:hover { border-color: #5C5C5C; }"
+  "button.nav { background: #1C1C1C; color: #EDEDED; border: 1px solid #333333; box-shadow: none; }"
+  "button.nav:hover { border-color: #5C5C5C; }"
   ".soon { font-family: serif; font-size: 18px; }"
   ".faint { color: #808080; font-family: monospace; }";
 
@@ -87,6 +87,8 @@ on_activate (GApplication *app)
       GtkWidget *journal = gtk_button_new_with_label ("Journal");
       gtk_widget_set_tooltip_text (journal, "Switch to the Journal. It asks for your PIN.");
       g_signal_connect (journal, "clicked", G_CALLBACK (on_journal), NULL);
+      gtk_widget_add_css_class (home, "nav");
+      gtk_widget_add_css_class (journal, "nav");
       gtk_header_bar_pack_start (GTK_HEADER_BAR (header), home);
       gtk_header_bar_pack_start (GTK_HEADER_BAR (header), journal);
     }
