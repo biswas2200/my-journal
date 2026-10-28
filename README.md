@@ -5,9 +5,9 @@ Linux (GTK4, C11). Write the loop down once, so it stops running in your
 head. Everything stays in one encrypted file on this laptop: no network,
 no accounts, no telemetry, no sync.
 
-The start screen also opens **Notes**, for study notes. It is a separate
-program that never sees the journal; it is an empty shell for now
-(subjects, the editor and an AI enhanced copy come next).
+The start screen also opens **Notes**, for study notes: a separate
+program that never sees the journal (see [Notes](#notes)). An AI enhanced
+copy of each note comes next.
 
 ## What it does (V1)
 
@@ -68,6 +68,41 @@ scratch file without touching the real one.
 On the lock screen, type the six digits; it unlocks on the sixth.
 `Backspace` removes a digit and `Esc` clears them. With a passphrase,
 type it and press Enter.
+
+## Notes
+
+Subjects (DSA) hold topics (Prefix sum), which hold study sessions: one
+note each, timed from its first keystroke to the last edit while you
+study (an edit more than 30 minutes later, like fixing a typo next week,
+keeps the time you studied). Opening a topic creates nothing until you
+type; a session left empty is removed. Notes save about a second after
+you stop typing, and when you switch, export or leave.
+
+Five formats and plain text, with no syntax on screen:
+
+| Format | Toolbar | Keys | Or type at the start of a line |
+| --- | --- | --- | --- |
+| Heading | H | `Ctrl+1` | `# ` |
+| Subheading | h | `Ctrl+2` | `## ` |
+| Bullet ● | ● | `Ctrl+.` | `- ` or `* ` |
+| Sub-bullet ◦ | ◦ | `Tab` on a bullet | `  - ` |
+| Arrow → | → | `Ctrl+-` | `> ` or `-> ` |
+| Plain text | ¶ | `Ctrl+0` | |
+
+Enter continues a list and ends it on an empty item; Tab and Shift+Tab
+indent and outdent; Backspace right after a bullet makes the line text
+again; Enter before a heading opens a line above it. **Markdown**
+(`Ctrl+M`) shows the note as Markdown to type by hand; both views store
+the same lines, a small Markdown subset (`# `, `## `, `- `, `  - `, `→ `,
+text; text that would read as a format is escaped with `\`).
+
+The **Sources** box holds the links you study from, one per line.
+**Export .md** (`Ctrl+E`) writes the whole topic, every session with its
+date, time and sources, to `~/Documents/Notes/<subject>/<topic>.md`.
+`Ctrl+N` starts another session on the same topic, `Ctrl+S` saves now.
+
+Notes live in `~/.local/share/journal-notes/notes.db` (0600 in a 0700
+folder). They are study material, so the file is not encrypted.
 
 ## Security model (Option B: encrypt at rest)
 
@@ -149,8 +184,15 @@ type it and press Enter.
      local doors that would go online on its behalf: systemd-resolved's
      DNS socket, container engines, and D-Bus calls that open links,
      start services or talk to the resolver or network manager.
-  Notes will be the only part with network and AI, and it can never
-  read the Journal's files (Landlock, with the Notes editor).
+- **Notes cannot reach the Journal's files.** Notes will be the only part
+  with network and AI, so before anything else it locks itself with
+  Landlock (`src/notes/core/notesjail.c`), a kernel allow-list a program
+  puts on itself: system folders and fonts to read; its own data,
+  settings, caches, the runtime folder, `/tmp` and `~/Documents/Notes` to
+  write. `~/.local/share/journal` and the login keyring are on no list, so
+  opening, listing, linking or renaming them fails with `EACCES`, also
+  through symlinks or `/proc/self/root`, and for every program Notes
+  starts. Without that lock Notes opens no notes.
 - **What the app cannot protect against:** someone who already runs
   programs as you (malware, a stolen login) can wait for you to unlock,
   or swap the launcher for a fake one. An unencrypted disk or swap file
@@ -239,14 +281,14 @@ persisted across restarts). The manual checklist is in
 
 | Check | Result (28 Oct 2026) | How |
 | --- | --- | --- |
-| Unit, UI and integration tests | 21 suites, all pass | `meson test -C build` |
+| Unit, UI and integration tests | 26 suites, all pass | `meson test -C build` |
 | Network jail: every non-local socket family, random and 64-bit domains, a real TCP listener that must receive nothing, io_uring, x32, threads, child programs | all refused | `tests/test_netjail.c` |
 | AppArmor profile, probed from outside without the jail | TCP, UDP, IPv6, DNS via resolved and the link portal refused | `tools/check-apparmor.sh` |
 | Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |
 | Static analysis (GCC `-fanalyzer`) | 0 findings in app and tests | `tools/analyze.sh` |
 | AddressSanitizer + UndefinedBehaviorSanitizer | clean | see Tests |
 | Valgrind memcheck | 0 errors, 0 leaks | see Tests |
-| Line coverage | 89.3% overall (Journal, Notes and the start screen) | `tools/coverage.sh` |
+| Line coverage | 89.2% overall (Journal, Notes and the start screen) | `tools/coverage.sh` |
 | Compiler warnings | `-Wall -Wextra -Werror`, none | every build |
 | Fuzzing (libFuzzer + ASan + UBSan on GitHub, 5 targets) | 1 bug found and fixed (a damaged file could hand the calendar a missing day) | [`fuzz/README.md`](fuzz/README.md) |
 
@@ -301,7 +343,11 @@ C/C++ support, or SonarQube for IDE in VS Code with
 ```
 src/launcher/ `journal`: the start screen; runs one program at a time
 src/diary/    `journal-diary`: the Journal's main(), in the network jail
-src/notes/    `journal-notes`: Notes (study notes; network and AI later)
+src/notes/    `journal-notes`: Notes (study notes; AI comes next)
+  core/       plain C, no UI, nothing of the Journal: noteline (the six
+              line kinds), notesdb (SQLite), notesjail (Landlock),
+              noteexport (Markdown export)
+  ui/         editor (formats, Markdown mode), notes_window
 src/core/   plain C, no UI, fully unit tested
   jdate       local days, parsing, formatting
   active_time seconds actually spent writing

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/biswas2200/Journal/Notes">
+    <file>notes.css</file>
+  </gresource>
+</gresources>

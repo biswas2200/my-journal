@@ -14,9 +14,18 @@ foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'jour
   test(name, isolated, args : [exe], env : test_env, suite : 'core')
 endforeach
 
+# Notes core. Runs under Valgrind with the Journal's core.
+foreach name : ['noteline', 'notesdb', 'noteexport']
+  exe = executable('test_' + name, 'test_' + name + '.c', dependencies : notes_core_dep)
+  test(name, isolated, args : [exe], env : test_env, suite : 'core')
+endforeach
+
 # The network jail. Its own suite: Valgrind cannot run seccomp filters.
 exe = executable('test_netjail', 'test_netjail.c', dependencies : core_dep)
 test('netjail', isolated, args : [exe], env : test_env, suite : 'sandbox')
+# Notes' file lock (Landlock): the journal is out of its reach.
+exe = executable('test_notesjail', 'test_notesjail.c', dependencies : notes_core_dep)
+test('notesjail', isolated, args : [exe], env : test_env, suite : 'sandbox')
 exe = executable('test_programs', 'test_programs.c', dependencies : programs_dep)
 test('programs', isolated, args : [exe], env : test_env, suite : 'core')
 
@@ -35,6 +44,11 @@ test('hardened', find_program('run-headless.sh'),
 test('launcher', find_program('run-headless.sh'),
      args : [files('check-launcher.sh'), launcher_exe],
      suite : 'ui', timeout : 120)
+
+# The Notes editor and window, inside Notes' file lock.
+notes_ui_test = executable('test_notes_ui', 'test_notes_ui.c', dependencies : notes_ui_dep)
+test('notes-ui', find_program('run-headless.sh'), args : [notes_ui_test],
+     env : test_env, suite : 'ui', timeout : 120)
 
 # The real Notes program, alone and under the real start screen.
 test('notes', find_program('run-headless.sh'),

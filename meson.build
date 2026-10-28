@@ -65,6 +65,29 @@ programs_dep = declare_dependency(
   dependencies : glib_dep,
 )
 
+# Notes' own core: plain logic with no UI and nothing of the Journal.
+notes_core_inc = include_directories('src/notes/core')
+gio_dep = dependency('gio-2.0', version : '>= 2.76')
+# A coverage build must still write its .gcda files from inside the
+# Notes file lock; only such builds open those object folders.
+notes_core_args = []
+if get_option('b_coverage')
+  notes_core_args += '-DJN_GCOV_ROOT="@0@"'.format(meson.project_build_root())
+endif
+notes_core_lib = static_library('notes-core',
+  'src/notes/core/noteline.c',
+  'src/notes/core/notesdb.c',
+  'src/notes/core/notesjail.c',
+  'src/notes/core/noteexport.c',
+  c_args : notes_core_args,
+  dependencies : [glib_dep, gio_dep, sqlite_dep],
+)
+notes_core_dep = declare_dependency(
+  link_with : notes_core_lib,
+  include_directories : notes_core_inc,
+  dependencies : [glib_dep, gio_dep, sqlite_dep],
+)
+
 # App
 gtk_dep = dependency('gtk4', version : '>= 4.12')
 # The login keyring, which holds the secret a PIN needs (see keyring.h).
@@ -105,8 +128,25 @@ diary_exe = executable('journal-diary', 'src/diary/main.c',
   install : true,
   install_dir : get_option('libexecdir'),
 )
+notes_resources = gnome.compile_resources('notes-resources',
+  'data/notes/notes.gresource.xml',
+  source_dir : 'data/notes',
+  c_name : 'notes',
+)
+notes_ui_lib = static_library('notes-ui',
+  'src/notes/ui/editor.c',
+  'src/notes/ui/notes_window.c',
+  notes_resources[1],
+  dependencies : [notes_core_dep, gtk_dep, programs_dep],
+)
+notes_ui_dep = declare_dependency(
+  link_with : notes_ui_lib,
+  sources : notes_resources,
+  include_directories : include_directories('src/notes/ui'),
+  dependencies : [notes_core_dep, gtk_dep, programs_dep],
+)
 notes_exe = executable('journal-notes', 'src/notes/main.c',
-  dependencies : [gtk_dep, programs_dep],
+  dependencies : notes_ui_dep,
   install : true,
   install_dir : get_option('libexecdir'),
 )

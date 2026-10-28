@@ -13,7 +13,7 @@ mkdir -p build-cov/gcov-reports
 # gcov runs from build-cov, where the compiler ran, so "../src/..." in the
 # coverage data leads to the sources (anywhere else the reports come out
 # empty).
-for gcda in $(find build-cov -name '*.gcda' | grep -E 'journal-(core|ui|programs)\.a\.p|journal(-diary|-notes)?\.p'); do
+for gcda in $(find build-cov -name '*.gcda' | grep -E '(journal-(core|ui|programs)|notes-(core|ui))\.a\.p|journal(-diary|-notes)?\.p'); do
   rel=${gcda#build-cov/}
   (cd build-cov && gcov -p -o "$(dirname "$rel")" "$rel" >/dev/null 2>&1)
 done
@@ -32,7 +32,7 @@ awk -F: '
   }
   END { if (NR > 0) print "  </file>"; print "</coverage>" }
 ' $(find build-cov/gcov-reports -name '*.gcov' | sort) > build-cov/coverage.xml
-for gcda in $(find build-cov -name '*.gcda' | grep -E 'journal-(core|ui|programs)\.a\.p|journal(-diary|-notes)?\.p'); do
+for gcda in $(find build-cov -name '*.gcda' | grep -E '(journal-(core|ui|programs)|notes-(core|ui))\.a\.p|journal(-diary|-notes)?\.p'); do
   gcov -n -o "$(dirname "$gcda")" "$gcda" 2>/dev/null
 done | awk '/^File/ {f=$2} /^Lines executed/ {split($2,a,":"); sub("%","",a[2]);
   if (f ~ /src\/.*\.c.$/) { pct[f]=a[2]; n[f]=$4 } }
