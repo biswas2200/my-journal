@@ -26,7 +26,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build pkg-config gcc libgtk-4-dev libgtk-4-bin \
-            libsqlite3-dev libsodium-dev libsecret-1-dev mutter dbus dbus-daemon valgrind
+            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev mutter dbus dbus-daemon valgrind
 
       - name: Build (all warnings are errors)
         shell: bash
@@ -38,7 +38,7 @@ jobs:
       - name: Tests with coverage (UI tests on a private headless display)
         run: tools/coverage.sh
 
-      - name: Valgrind (core tests)
+      - name: Valgrind (core tests; the network jail cannot run under Valgrind)
         run: >
           JR_TEST_WRAPPER='valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=1 -q'
           meson test -C build --suite core --timeout-multiplier 4 --print-errorlogs
@@ -71,7 +71,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build pkg-config gcc libgtk-4-dev libgtk-4-bin \
-            libsqlite3-dev libsodium-dev libsecret-1-dev mutter dbus dbus-daemon
+            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev mutter dbus dbus-daemon
 
       - name: Build with AddressSanitizer + UndefinedBehaviorSanitizer
         shell: bash
@@ -84,6 +84,11 @@ jobs:
         run: meson test -C build-asan --suite core --print-errorlogs
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1 # undefined behaviour fails the test
+
+      - name: Network jail tests
+        run: meson test -C build-asan --suite sandbox --print-errorlogs
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
 
       - name: UI tests (GTK keeps global caches, so leak detection off)
         run: ASAN_OPTIONS=detect_leaks=0 meson test -C build-asan --suite ui --print-errorlogs
@@ -115,7 +120,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build pkg-config clang libgtk-4-dev \
-            libsqlite3-dev libsodium-dev libsecret-1-dev
+            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev
 
       - name: Restore what earlier runs found
         uses: actions/cache@v6

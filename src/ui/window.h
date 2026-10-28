@@ -18,6 +18,11 @@ typedef enum {
 #define JR_TYPE_WINDOW (jr_window_get_type ())
 G_DECLARE_FINAL_TYPE (JrWindow, jr_window, JR, WINDOW, GtkApplicationWindow)
 
+/* Called once when the person leaves through Home or Notes, with the
+ * exit code for the launcher (programs.h), right before the window
+ * saves, locks and closes. */
+typedef void (*JrLeaveFunc) (int code, gpointer user);
+
 /* Takes ownership of `journal`; it is closed when the window goes away. */
 JrWindow  *jr_window_new              (GtkApplication *app, JrJournal *journal);
 JrJournal *jr_window_get_journal      (JrWindow *win);
@@ -45,6 +50,11 @@ gint64     jr_window_day_seconds      (JrWindow *win, const char *day_iso);
 void       jr_window_settings_changed (JrWindow *win);
 /* A modal window that must disappear when the journal locks. */
 void       jr_window_set_dialog       (JrWindow *win, GtkWindow *dialog);
+
+/* Started by the launcher: adds Home and Notes to every screen. */
+void       jr_window_set_navigation   (JrWindow *win, JrLeaveFunc leave, gpointer user);
+/* Reports `code` to the leave function, then saves, locks and closes. */
+void       jr_window_leave            (JrWindow *win, int code);
 
 /* The day screen if it is showing, else NULL (used by tests). */
 struct _JrDayView *jr_window_get_day_view (JrWindow *win);

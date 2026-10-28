@@ -1,12 +1,21 @@
 [Desktop Entry]
 Type=Application
 Name=Journal
-GenericName=Daily journal
-Comment=A private daily journal that stays on this laptop
+GenericName=Journal and study notes
+Comment=A private daily journal that stays on this laptop, and study notes
 Exec=journal
 Icon=io.github.biswas2200.Journal
 Terminal=false
 Categories=Utility;GTK;
-Keywords=diary;journal;notes;writing;
+Keywords=diary;journal;notes;writing;study;
 StartupNotify=true
 SingleMainWindow=true
+Actions=journal;notes;
+
+[Desktop Action journal]
+Name=Open the Journal
+Exec=journal --open=journal
+
+[Desktop Action notes]
+Name=Open Notes
+Exec=journal --open=notes

@@ -5,8 +5,10 @@
 #include "activity_view.h"
 #include "day_view.h"
 #include "lock_view.h"
+#include "programs.h"
 #include "security_view.h"
 #include "sleep_watch.h"
+#include "widgets.h"
 
 struct _JrWindow {
   GtkApplicationWindow parent_instance;
@@ -18,6 +20,8 @@ struct _JrWindow {
   JrDayView    *day_view; /* the current screen if it is a day, else NULL */
   GtkWindow    *dialog;   /* not owned; cleared when it is destroyed */
   gboolean      locked;   /* the lock screen is showing */
+  JrLeaveFunc   leave;    /* set when started by the launcher */
+  gpointer      leave_user;
 };
 
 G_DEFINE_FINAL_TYPE (JrWindow, jr_window, GTK_TYPE_APPLICATION_WINDOW)
@@ -84,14 +88,66 @@ on_dialog_destroy (GtkWidget *dialog, gpointer data)
     win->dialog = NULL;
 }
 
+static void
+on_home_clicked (GtkButton *button, gpointer win)
+{
+  (void) button;
+  jr_window_leave (win, JR_EXIT_HOME);
+}
+
+static void
+on_notes_clicked (GtkButton *button, gpointer win)
+{
+  (void) button;
+  jr_window_leave (win, JR_EXIT_TO_NOTES);
+}
+
+/* Home and Notes at the start of a screen's header (lock screen too). */
+static void
+add_navigation (JrWindow *win, GtkWidget *header)
+{
+  GtkWidget *slot = jr_header_nav_slot (header);
+  if (win->leave == NULL || slot == NULL || gtk_widget_get_first_child (slot) != NULL)
+    return;
+  GtkWidget *home = gtk_button_new_with_label ("Home");
+  gtk_widget_set_tooltip_text (home, "Back to the start screen. The journal locks.");
+  g_signal_connect (home, "clicked", G_CALLBACK (on_home_clicked), win);
+  GtkWidget *notes = gtk_button_new_with_label ("Notes");
+  gtk_widget_set_tooltip_text (notes, "Switch to Notes. The journal locks.");
+  g_signal_connect (notes, "clicked", G_CALLBACK (on_notes_clicked), win);
+  gtk_box_append (GTK_BOX (slot), home);
+  gtk_box_append (GTK_BOX (slot), notes);
+  gtk_box_append (GTK_BOX (slot), jr_header_sep ());
+  gtk_widget_set_visible (slot, TRUE);
+}
+
 /* Replaces header and content. The old ones are destroyed. */
 static void
 set_screen (JrWindow *win, GtkWidget *header, GtkWidget *content)
 {
   save_current (win);
   win->day_view = NULL;
+  add_navigation (win, header);
   gtk_window_set_titlebar (GTK_WINDOW (win), header);
   gtk_window_set_child (GTK_WINDOW (win), content);
+}
+
+void
+jr_window_set_navigation (JrWindow *win, JrLeaveFunc leave, gpointer user)
+{
+  win->leave = leave;
+  win->leave_user = user;
+  add_navigation (win, gtk_window_get_titlebar (GTK_WINDOW (win)));
+}
+
+void
+jr_window_leave (JrWindow *win, int code)
+{
+  JrLeaveFunc leave = win->leave;
+  win->leave = NULL; /* once */
+  if (leave != NULL)
+    leave (code, win->leave_user);
+  gtk_window_close (GTK_WINDOW (win)); /* saves, wipes and locks (on_close_request) */
 }
 
 JrDayView *

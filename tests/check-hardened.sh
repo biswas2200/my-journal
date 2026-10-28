@@ -4,7 +4,8 @@
 # that its memory is protected:
 #  - not dumpable: /proc/<pid>/mem and environ belong to root, so other
 #    programs of the same user cannot read its memory or attach a debugger;
-#  - core dumps off: a crash cannot write entry text or keys to disk.
+#  - core dumps off: a crash cannot write entry text or keys to disk;
+#  - in the network jail (seccomp), with no way to gain privileges.
 # Then asks it to quit (SIGTERM) and expects a clean exit.
 set -u
 app="$1"
@@ -19,11 +20,14 @@ owner=$(stat -c %U "/proc/$pid/mem")
 if cat "/proc/$pid/environ" >/dev/null 2>&1; then
   echo "another process of the same user can read its /proc/$pid/environ"; fail=1
 fi
+# The network jail is on (seccomp filter mode) and cannot be undone.
+grep -q "^Seccomp:[[:space:]]*2" "/proc/$pid/status" || { echo "no network jail (seccomp off)"; fail=1; }
+grep -q "^NoNewPrivs:[[:space:]]*1" "/proc/$pid/status" || { echo "no_new_privs not set"; fail=1; }
 core=$(awk '/Max core file size/ {print $5, $6}' "/proc/$pid/limits")
 [ "$core" = "0 0" ] || { echo "core dumps allowed: $core"; fail=1; }
 kill -TERM "$pid"
 wait "$pid"
 status=$?
 [ $status -eq 0 ] || { echo "app exited with $status after SIGTERM"; fail=1; }
-[ $fail -eq 0 ] && echo "hardened: not dumpable, no core dumps, clean exit"
+[ $fail -eq 0 ] && echo "hardened: not dumpable, no core dumps, network jail on, clean exit"
 exit $fail

@@ -1,0 +1,56 @@
+# AppArmor profile for the Journal (journal-diary): the second, independent
+# network lock. The first is the seccomp jail the program enters itself
+# (src/core/netjail.c). Load it with tools/install-apparmor.sh.
+#
+# Everything else stays as it is (`all`), then:
+#  - no internet, IPv6, raw, packet or other non-local sockets, even ones
+#    handed over from another process;
+#  - no local sockets of services that would go online for it (DNS
+#    resolver, container engines);
+#  - no D-Bus calls that make another program fetch or open a link.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile journal-diary @DIARY@ flags=(attach_disconnected) {
+  all,
+
+  deny network inet,
+  deny network inet6,
+  deny network packet,
+  deny network netlink,
+  deny network bluetooth,
+  deny network vsock,
+  deny network ax25,
+  deny network ipx,
+  deny network appletalk,
+  deny network x25,
+  deny network rds,
+  deny network tipc,
+  deny network can,
+  deny network qipcrtr,
+  deny network smc,
+  deny network xdp,
+  deny network mctp,
+
+  # DNS through systemd-resolved, and container engines that can reach
+  # the network: local sockets, but they would go online on our behalf.
+  deny /{,var/}run/systemd/resolve/** rw,
+  deny /{,var/}run/docker.sock rw,
+  deny /{,var/}run/containerd/** rw,
+  deny /{,var/}run/podman/** rw,
+  deny /{,var/}run/user/*/podman/** rw,
+  deny /{,var/}run/user/*/docker.sock rw,
+  deny /{,var/}run/nscd/** rw,
+
+  # D-Bus: no "open this link", no resolver, no network manager, no
+  # starting other services or programs.
+  deny dbus send bus=session interface=org.freedesktop.portal.OpenURI,
+  deny dbus send bus=session interface=org.freedesktop.portal.Email,
+  deny dbus send bus=session interface=org.freedesktop.portal.Print,
+  deny dbus send bus=session interface=org.freedesktop.Application member=Open,
+  deny dbus send bus=session interface=org.gtk.Actions,
+  deny dbus send bus=system peer=(name=org.freedesktop.resolve1),
+  deny dbus send bus=system peer=(name=org.freedesktop.NetworkManager),
+  deny dbus send bus=system interface=org.freedesktop.systemd1.Manager,
+  deny dbus send bus=session interface=org.freedesktop.systemd1.Manager,
+}

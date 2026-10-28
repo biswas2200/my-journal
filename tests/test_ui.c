@@ -8,7 +8,10 @@
 #include <glib/gstdio.h>
 #include <gtk/gtk.h>
 #include <sqlite3.h>
+#include "cases.h"
 #include "day_view.h"
+#include "netjail.h"
+#include "programs.h"
 #include "journal.h"
 #include "secret_dialog.h"
 #include "window.h"
@@ -649,6 +652,175 @@ test_ui_saves_on_quit_and_sleep (void)
   g_rmdir (dir);
 }
 
+typedef struct {
+  int calls;
+  int code;
+} Left;
+
+static void
+on_left (int code, gpointer user)
+{
+  Left *l = user;
+  l->calls++;
+  l->code = code;
+}
+
+/* Started by the launcher, every screen has Home and Notes. Leaving
+ * saves what was typed, locks, closes the window and tells the launcher
+ * where to go; the next visit starts at the lock screen. Without the
+ * launcher there are no such buttons. */
+static void
+test_ui_leave (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+  JrJournal *j = open_journal (path);
+  char *recovery = jr_journal_enable_lock (j, JR_LOCK_PIN, "123456", MASTER);
+
+  JrWindow *win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (300);
+  g_assert_null (find_button (GTK_WIDGET (win), "Home"));
+  g_assert_null (find_button (GTK_WIDGET (win), "Notes"));
+
+  Left left = { 0, -1 };
+  jr_window_set_navigation (win, on_left, &left);
+  g_assert_nonnull (find_button (GTK_WIDGET (win), "Home"));
+  GtkWidget *notes = find_button (GTK_WIDGET (win), "Notes");
+  g_assert_nonnull (notes);
+
+  /* Switch to Notes in the middle of a sentence. */
+  type_text (win, "written right before switching");
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  g_signal_emit_by_name (notes, "clicked");
+  pump (100);
+  g_assert_null (win); /* gone: text buffers and key with it */
+  g_assert_cmpint (left.calls, ==, 1);
+  g_assert_cmpint (left.code, ==, JR_EXIT_TO_NOTES);
+
+  /* Coming back: locked, and the sentence was saved. */
+  j = open_journal (path);
+  g_assert_false (jr_journal_is_unlocked (j));
+  win = jr_window_new (NULL, j);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (300);
+  left = (Left){ 0, -1 };
+  jr_window_set_navigation (win, on_left, &left);
+  GtkWidget *home = find_button (GTK_WIDGET (win), "Home"); /* on the lock screen too */
+  g_assert_nonnull (home);
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  g_signal_emit_by_name (home, "clicked");
+  pump (100);
+  g_assert_null (win);
+  g_assert_cmpint (left.calls, ==, 1);
+  g_assert_cmpint (left.code, ==, JR_EXIT_HOME);
+
+  j = open_journal (path);
+  g_assert_false (jr_journal_is_unlocked (j));
+  g_assert_cmpint (jr_journal_unlock (j, "123456", jr_now ()), ==, JR_UNLOCK_OK);
+  g_assert_true (saved_today (j, "written right before switching"));
+  jr_journal_close (j);
+
+  jr_secret_free (recovery);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
+static void
+collect_text_views (GtkWidget *root, GPtrArray *out)
+{
+  if (GTK_IS_TEXT_VIEW (root))
+    g_ptr_array_add (out, root);
+  for (GtkWidget *c = gtk_widget_get_first_child (root); c != NULL; c = gtk_widget_get_next_sibling (c))
+    collect_text_views (c, out);
+}
+
+/* Height the laid-out text of a block really takes. */
+static int
+text_height (GtkTextView *tv)
+{
+  GtkTextIter end;
+  int y = 0, h = 0;
+  gtk_text_buffer_get_end_iter (gtk_text_view_get_buffer (tv), &end);
+  gtk_text_view_get_line_yrange (tv, &end, &y, &h);
+  return y + h + gtk_text_view_get_top_margin (tv) + gtk_text_view_get_bottom_margin (tv);
+}
+
+/* Reopening a day that has entries: every block is exactly as tall as
+ * its text (not one character per line, not one line for a paragraph),
+ * so "New stamped entry" sits right under the last one, also after the
+ * window changed width. */
+static void
+test_ui_saved_entries_fit (void)
+{
+  if (!gtk_init_check ())
+    {
+      g_test_skip ("no display");
+      return;
+    }
+  g_autofree char *dir = g_dir_make_tmp ("journal-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "journal.db", NULL);
+  JrJournal *j = open_journal (path);
+  char iso[JR_ISO_LEN];
+  jr_day_to_iso (jr_day_today (), iso);
+  static const char *texts[] = {
+    "walked by the river",
+    "x",
+    "Slow start today. Two chapters done before noon, then my mind drifted to what-ifs again. "
+    "Noticing it now instead of following it. Evening check-in: the loop showed up around dinner, "
+    "but it was shorter this time, and I went for a walk instead of scrolling.",
+  };
+  gint64 t = jr_now () - 3600;
+  for (gsize i = 0; i < G_N_ELEMENTS (texts); i++)
+    jr_journal_add_entry (j, iso, t + (gint64) i, texts[i], t + (gint64) i);
+
+  JrWindow *win = jr_window_new (NULL, j);
+  Left left = { 0, -1 };
+  jr_window_set_navigation (win, on_left, &left); /* as when the launcher starts it */
+  /* First shown narrow, then widened: what a compositor may do when a
+   * window opens with a focus token. Text wraps one word (or letter) per
+   * line at first; the heights must follow the final width. */
+  gtk_window_set_default_size (GTK_WINDOW (win), 300, 600);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (500);
+  gtk_window_maximize (GTK_WINDOW (win));
+  pump (1000);
+  g_assert_cmpint (gtk_widget_get_width (GTK_WIDGET (win)), >, 900);
+
+  GPtrArray *views = g_ptr_array_new ();
+  collect_text_views (GTK_WIDGET (win), views);
+  g_assert_cmpuint (views->len, ==, G_N_ELEMENTS (texts));
+  JrCases c = { "saved entries fit", 0, 0 };
+  for (guint i = 0; i < views->len; i++)
+    {
+      GtkTextView *tv = views->pdata[i];
+      int got = gtk_widget_get_height (GTK_WIDGET (tv)), want = text_height (tv);
+      jr_case (&c, texts[i], got >= want && got <= want + 4, "Expected height %d px  Got %d px", want, got);
+    }
+  /* The button right under the last block. */
+  GtkWidget *last = views->pdata[views->len - 1];
+  GtkWidget *label = find_label (GTK_WIDGET (win), "New stamped entry");
+  g_assert_nonnull (label);
+  graphene_point_t a = GRAPHENE_POINT_INIT (0, (float) gtk_widget_get_height (last)), pa, pb;
+  graphene_point_t b = GRAPHENE_POINT_INIT (0, 0);
+  g_assert_true (gtk_widget_compute_point (last, GTK_WIDGET (win), &a, &pa));
+  g_assert_true (gtk_widget_compute_point (label, GTK_WIDGET (win), &b, &pb));
+  jr_case (&c, "button under the last entry", pb.y - pa.y >= 0 && pb.y - pa.y < 60,
+           "Expected a gap under 60 px  Got %.0f px", pb.y - pa.y);
+  jr_cases_done (&c);
+  g_ptr_array_unref (views);
+
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
 /* Spec manual check "very long entry", automated: a ~1 MiB paste saves
  * and the window keeps responding. */
 static void
@@ -1247,7 +1419,13 @@ main (int argc, char **argv)
   g_test_add_func ("/ui/master-upgrade", test_ui_master_upgrade);
   g_test_add_func ("/ui/day-dropdown", test_ui_day_dropdown);
   g_test_add_func ("/ui/follow-cursor", test_ui_follow_cursor);
+  g_test_add_func ("/ui/leave", test_ui_leave);
+  g_test_add_func ("/ui/saved-entries-fit", test_ui_saved_entries_fit);
+  /* The whole UI runs inside the network jail, as the real Journal does,
+   * and must never even try the network. */
+  g_assert_true (jr_netjail_enter ());
   int rc = g_test_run ();
+  g_assert_cmpuint (jr_netjail_blocked (), ==, 0);
   if (keyring != NULL)
     g_hash_table_unref (keyring);
   return rc;

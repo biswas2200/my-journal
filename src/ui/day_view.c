@@ -779,12 +779,14 @@ jr_day_view_new (JrWindow *win, JrDay day, GtkWidget **header_out)
 }
 
 /* GtkTextView (GTK 4.22) wraps freshly loaded text while it is being
- * allocated, and the resize it asks for at that moment is dropped, so a
+ * allocated, and the resize it asks for at that moment is dropped. So a
  * loaded block can stay one line tall although its text is laid out on
- * several. Each frame, compare every block's height with the bottom of
- * its laid-out text and ask for a resize from outside allocation. Stops
- * once all blocks fit (normally after a frame or two), so the frame clock
- * is not kept running. */
+ * several, or stay as tall as its text was when wrapped at almost no
+ * width, one letter per line (seen when the window opens with a focus
+ * token from the launcher). Each frame, compare every block's height
+ * with the bottom of its laid-out text and ask for a resize from outside
+ * allocation, in both directions. Stops once all blocks fit (normally
+ * after a frame or two), so the frame clock is not kept running. */
 #define REMEASURE_MAX_FRAMES 300
 
 static gboolean
@@ -808,7 +810,8 @@ remeasure_tick (GtkWidget *widget, GdkFrameClock *clock, gpointer data)
       gtk_text_buffer_get_end_iter (b->buffer, &end);
       gtk_text_view_get_line_yrange (tv, &end, &y, &h);
       int needed = y + h + gtk_text_view_get_top_margin (tv) + gtk_text_view_get_bottom_margin (tv);
-      if (gtk_widget_get_height (b->text) < needed)
+      int height = gtk_widget_get_height (b->text);
+      if (height < needed || height > needed + 1)
         {
           gtk_widget_queue_resize (b->text);
           pending = TRUE;

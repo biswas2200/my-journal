@@ -1,15 +1,30 @@
-/* Journal: a private daily journal for one person.
+/* journal-diary: the private daily journal.
  *
- * Entry point: sets up GTK, the theme and the journal file, then hands
- * everything to the window. */
+ * Entry point: enters the network jail, sets up GTK, the theme and the
+ * journal file, then hands everything to the window. Normally started by
+ * the launcher (`journal`, see programs.h); its exit code says where the
+ * person went next. */
 #include <glib-unix.h>
 #include <gtk/gtk.h>
 #include "harden.h"
 #include "journal.h"
+#include "netjail.h"
+#include "programs.h"
 #include "keyring.h"
 #include "window.h"
 
-#define APP_ID "io.github.biswas2200.Journal"
+#define APP_ID "io.github.biswas2200.Journal.Diary"
+#define ICON   "io.github.biswas2200.Journal"
+#define RESOURCES "/io/github/biswas2200/Journal"
+
+static int exit_code = JR_EXIT_QUIT;
+
+static void
+on_leave (int code, gpointer data)
+{
+  (void) data;
+  exit_code = code;
+}
 
 static void
 load_theme (void)
@@ -57,7 +72,7 @@ on_activate (GApplication *app)
     }
 
   load_theme ();
-  gtk_window_set_default_icon_name (APP_ID);
+  gtk_window_set_default_icon_name (ICON);
   g_autofree char *path = database_path ();
   GError *error = NULL;
   JrJournal *journal = jr_journal_open (path, &error);
@@ -72,7 +87,10 @@ on_activate (GApplication *app)
       return;
     }
   jr_journal_set_device_store (journal, jr_keyring_store ());
-  gtk_window_present (GTK_WINDOW (jr_window_new (GTK_APPLICATION (app), journal)));
+  JrWindow *win = jr_window_new (GTK_APPLICATION (app), journal);
+  if (g_strcmp0 (g_getenv ("JOURNAL_LAUNCHER"), "1") == 0)
+    jr_window_set_navigation (win, on_leave, NULL);
+  gtk_window_present (GTK_WINDOW (win));
 }
 
 /* SIGTERM / SIGINT (logout, Ctrl+C): close windows so everything is saved. */
@@ -95,6 +113,13 @@ main (int argc, char **argv)
   /* Before anything holds a secret: no core dumps, no memory peeking. */
   if (!jr_harden_process ())
     g_printerr ("journal: could not disable core dumps\n");
+  /* Before any thread, socket or library: no network, ever. Without the
+   * jail the journal does not start. */
+  if (!jr_netjail_enter ())
+    {
+      g_printerr ("journal: the kernel refused the no-network filter; not starting\n");
+      return 1;
+    }
 
   /* The software renderer uses far less memory than the GL/Vulkan ones
    * and is plenty for text. Set GSK_RENDERER to override. */
@@ -107,10 +132,13 @@ main (int argc, char **argv)
     }
 
   GtkApplication *app = gtk_application_new (APP_ID, G_APPLICATION_DEFAULT_FLAGS);
+  /* GTK finds the bundled icons under the resource base path, which it
+   * would otherwise derive from APP_ID (…/Journal/Diary). */
+  g_application_set_resource_base_path (G_APPLICATION (app), RESOURCES);
   g_signal_connect (app, "activate", G_CALLBACK (on_activate), NULL);
   g_unix_signal_add (SIGTERM, on_signal, app);
   g_unix_signal_add (SIGINT, on_signal, app);
   int status = g_application_run (G_APPLICATION (app), argc, argv);
   g_object_unref (app);
-  return status;
+  return status != 0 ? status : exit_code;
 }

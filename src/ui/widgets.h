@@ -15,6 +15,9 @@ void       jr_pin_dots_set   (GtkWidget *dots, int n);
 GtkWidget *jr_stat_new       (const char *title, GtkWidget **value_out);
 /* Header bar with window controls; `title` may be NULL. */
 GtkWidget *jr_header_new     (const char *title);
+/* An empty, hidden box at the very start of such a header, for buttons
+ * every screen shares (Home, Notes); NULL for other widgets. */
+GtkWidget *jr_header_nav_slot (GtkWidget *header);
 /* 1 px vertical separator for the header. */
 GtkWidget *jr_header_sep     (void);
 /* Zeroes the text of an editable before it is destroyed. */

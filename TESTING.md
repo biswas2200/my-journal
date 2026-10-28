@@ -44,7 +44,13 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Old weaker keys re-saved at the current Argon2id cost on unlock (PIN, master, passphrase) | `/journal/stronger-cost` |
 | Recovery key cannot be copied or selected | `/ui/flow` |
 | Writing area marked private for input methods | `/ui/flow` |
-| Real binary: non-dumpable, core dumps off, clean exit on SIGTERM | `hardened` |
+| Real binary: non-dumpable, core dumps off, network jail on (seccomp mode 2, no_new_privs), clean exit on SIGTERM | `hardened` |
+| Network jail: only exact `AF_UNIX` sockets; every other family, garbage and 64-bit domains, `socketpair`, `io_uring`, x32 refused with `EACCES` and counted; a real TCP listener receives nothing; threads started earlier and child programs are covered | `sandbox/netjail` |
+| The whole Journal UI runs inside the jail and never even tries the network (0 blocked calls over every UI test) | `ui` (main) |
+| Hand-over: exit codes 0/10/11/12 mean quit/Home/Notes/Journal; any other code or signal returns to the start screen with an error; SIGTERM/SIGINT quit | `core/programs` (table, plus every code and signal) |
+| Start screen: Journal → Notes → quit, Notes → Journal, Home, a crash, logout while a program runs (it gets SIGTERM first), bad `--open` | `launcher` (stand-in programs) |
+| Home and Notes on every screen (lock screen too) only when the launcher started the Journal; leaving saves, locks and closes; the next visit starts locked | `/ui/leave` |
+| Reopened entries are exactly as tall as their text, also after the window changes width; "New stamped entry" sits right under them | `/ui/saved-entries-fit` |
 | Crash during saving (SIGKILL at random moments): no lost acknowledged save, file intact | `crash` (`/crash/entries-survive-kill`) |
 | Crash during a PIN change: old or new PIN still opens it, master passphrase and recovery key still work | `crash` (`/crash/lock-change-survives-kill`) |
 | Lock screen keyboard: PIN on 6th digit, Backspace/Esc, master passphrase, recovery key, 5 wrong PINs block it, closing the new-PIN dialog locks again | `/ui/pin-lock-screen` |
@@ -208,3 +214,10 @@ and Lock & security shows "Change master passphrase".*
 *The PIN cannot be checked ("the login keyring ... no longer has its
 key"); the master passphrase opens it, and a new PIN is then set up for
 that keyring.*
+
+### 12. The AppArmor lock holds on its own
+
+After `sudo meson install -C build` and `sudo tools/install-apparmor.sh`,
+run `tools/check-apparmor.sh`. Expect every probe "refused" (TCP, UDP,
+IPv6, DNS through systemd-resolved, the "open a link" portal) and, with
+the Journal open, `running journal-diary: journal-diary (enforce)`.

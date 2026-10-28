@@ -5,6 +5,10 @@ Linux (GTK4, C11). Write the loop down once, so it stops running in your
 head. Everything stays in one encrypted file on this laptop: no network,
 no accounts, no telemetry, no sync.
 
+The start screen also opens **Notes**, for study notes. It is a separate
+program that never sees the journal; it is an empty shell for now
+(subjects, the editor and an AI enhanced copy come next).
+
 ## What it does (V1)
 
 1. **Daily journal with a day dropdown.** Opens on today with the cursor
@@ -31,15 +35,20 @@ no accounts, no telemetry, no sync.
 
 ```bash
 sudo apt install build-essential meson ninja-build pkg-config \
-  libgtk-4-dev libsqlite3-dev libsodium-dev libsecret-1-dev
+  libgtk-4-dev libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev
 meson setup build
 meson compile -C build
 meson test -C build            # unit + UI tests
-sudo meson install -C build    # binary, .desktop file, icon
+sudo meson install -C build    # programs, .desktop files, icon, AppArmor profile
+sudo tools/install-apparmor.sh # load the second network lock (once)
+tools/check-apparmor.sh        # optional: probe that it refuses the network
 ```
 
-Run it from the app grid ("Journal") or with `journal`. To uninstall:
-`sudo ninja -C build uninstall`.
+Run it from the app grid ("Journal") or with `journal`; the start screen
+offers the Journal and Notes. `journal --open=journal` (or `notes`) skips
+it, as do the two actions in the app menu. To uninstall:
+`sudo ninja -C build uninstall`, then remove the AppArmor profile as
+`tools/install-apparmor.sh` explains.
 
 The journal lives at `$XDG_DATA_HOME/journal/journal.db`
 (normally `~/.local/share/journal/journal.db`), created with mode 0600 in
@@ -115,9 +124,33 @@ type it and press Enter.
   and other programs running as you cannot attach a debugger or read its
   memory (`/proc/<pid>/mem`). The writing area tells input methods it is
   private, so they do not learn or remember your words.
-- **No network.** The only outside contact is the local system bus, to
-  hear "about to sleep" from logind. No sockets, no telemetry, no logging
-  of entry text.
+- **Two programs, kept apart.** `journal` is only the start screen: it
+  links none of the Journal's code, never opens its file, and learns
+  nothing from a program but its exit code. The Journal
+  (`libexec/journal-diary`) and Notes (`libexec/journal-notes`) are
+  separate processes, one at a time. Leaving the Journal (Home, or
+  switching to Notes) saves, wipes and ends its process, so every visit
+  starts at the lock screen.
+- **No network, two locks.** The Journal needs none: its only outside
+  contact is local, the display, the session bus and logind ("about to
+  sleep"). It is made unable to reach the network at all:
+  1. *seccomp jail* (`src/core/netjail.c`), entered first thing in
+     `main()`, before any thread: only local `AF_UNIX` sockets can be
+     created. Internet, IPv6, raw, packet, netlink and every other
+     socket, and `io_uring` (which could open sockets without
+     `socket()`), fail with `EACCES` before anything is sent: no request
+     leaves, so no answer can come back. Every attempt is counted and
+     logged. It covers threads that already exist and every program the
+     Journal starts, cannot be undone, and if the kernel refuses it the
+     Journal does not start.
+  2. *AppArmor profile* (`data/apparmor/journal-diary.in`), enforced by
+     the kernel from outside the program: the same socket families are
+     denied (also sockets handed over by another process), and so are the
+     local doors that would go online on its behalf: systemd-resolved's
+     DNS socket, container engines, and D-Bus calls that open links,
+     start services or talk to the resolver or network manager.
+  Notes will be the only part with network and AI, and it can never
+  read the Journal's files (Landlock, with the Notes editor).
 - **What the app cannot protect against:** someone who already runs
   programs as you (malware, a stolen login) can wait for you to unlock,
   or swap the launcher for a fake one. An unencrypted disk or swap file
@@ -204,9 +237,11 @@ persisted across restarts). The manual checklist is in
 
 ## Quality checks
 
-| Check | Result (10 Oct 2026) | How |
+| Check | Result (28 Oct 2026) | How |
 | --- | --- | --- |
-| Unit, UI and integration tests | 12 suites, all pass | `meson test -C build` |
+| Unit, UI and integration tests | 20 suites, all pass | `meson test -C build` |
+| Network jail: every non-local socket family, random and 64-bit domains, a real TCP listener that must receive nothing, io_uring, x32, threads, child programs | all refused | `tests/test_netjail.c` |
+| AppArmor profile, probed from outside without the jail | TCP, UDP, IPv6, DNS via resolved and the link portal refused | `tools/check-apparmor.sh` |
 | Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |
 | Static analysis (GCC `-fanalyzer`) | 0 findings in app and tests | `tools/analyze.sh` |
 | AddressSanitizer + UndefinedBehaviorSanitizer | clean | see Tests |
@@ -264,6 +299,9 @@ C/C++ support, or SonarQube for IDE in VS Code with
 ## Layout
 
 ```
+src/launcher/ `journal`: the start screen; runs one program at a time
+src/diary/    `journal-diary`: the Journal's main(), in the network jail
+src/notes/    `journal-notes`: Notes (study notes; network and AI later)
 src/core/   plain C, no UI, fully unit tested
   jdate       local days, parsing, formatting
   active_time seconds actually spent writing
@@ -273,6 +311,8 @@ src/core/   plain C, no UI, fully unit tested
   vault       keys, Argon2id wrapping, entry encryption, recovery key
   journal     the rules: locked/unlocked, PIN/passphrase, lock jobs, lockout
   harden      non-dumpable process, no core dumps
+  netjail     the Journal's no-network seccomp filter
+  programs    launcher hand-over: exit codes and what follows them
   text        word count
 src/ui/     GTK4
   window      screens, ticker, shortcuts, locking
@@ -282,7 +322,7 @@ src/ui/     GTK4
   activity_view, bar_chart   04 activity and time
   security_view, secret_dialog  05 lock and security
   sleep_watch logind PrepareForSleep
-data/       stylesheet, icons, .desktop file
+data/       stylesheet, icons, .desktop files, AppArmor profile
 tests/      unit tests and the UI test
 fuzz/       fuzz targets, their seeds, and every input that found a bug
 ```
@@ -303,7 +343,9 @@ fuzz/       fuzz targets, their seeds, and every input that found a bug
 - **Loaded text height:** GTK 4.22's GtkTextView drops the resize it
   asks for when it wraps text during allocation, so the day view checks
   each block's height against its laid-out text for the first frames
-  after opening and corrects it.
+  after opening and corrects it, both ways: too short (one line for a
+  paragraph) and too tall (one letter per line, seen when the launcher
+  opens the window with a focus token).
 
 ## License
 

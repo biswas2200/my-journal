@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Journal
+Comment=Started from Journal; matches its windows to the Journal icon
+Exec=journal
+Icon=io.github.biswas2200.Journal
+Terminal=false
+NoDisplay=true

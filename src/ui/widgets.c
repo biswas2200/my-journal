@@ -85,9 +85,20 @@ jr_header_new (const char *title)
   GtkWidget *header = gtk_header_bar_new ();
   /* An empty box as title widget keeps the centre free; titles sit at the start. */
   gtk_header_bar_set_title_widget (GTK_HEADER_BAR (header), gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0));
+  /* First at the start, hidden until something is put in it. */
+  GtkWidget *slot = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_visible (slot, FALSE);
+  gtk_header_bar_pack_start (GTK_HEADER_BAR (header), slot);
+  g_object_set_data (G_OBJECT (header), "jr-nav-slot", slot);
   if (title != NULL)
     gtk_header_bar_pack_start (GTK_HEADER_BAR (header), jr_label (title, "title-text", NULL));
   return header;
+}
+
+GtkWidget *
+jr_header_nav_slot (GtkWidget *header)
+{
+  return header != NULL ? g_object_get_data (G_OBJECT (header), "jr-nav-slot") : NULL;
 }
 
 GtkWidget *
