@@ -12,7 +12,6 @@
 #include <errno.h>
 #include <linux/io_uring.h>
 #include <netinet/in.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -47,6 +46,22 @@ enter_or_die (void)
       g_printerr ("could not enter the network jail\n");
       g_assert_not_reached ();
     }
+}
+
+/* TRUE if the socket was refused with EACCES. Anything it did get is
+ * closed, so a failing check never leaks a descriptor. */
+static gboolean
+refused (int domain, int type)
+{
+  errno = 0;
+  int fd = socket (domain, type, 0);
+  int err = errno;
+  if (fd >= 0)
+    {
+      close (fd);
+      return FALSE;
+    }
+  return err == EACCES;
 }
 
 static void
@@ -185,14 +200,11 @@ test_nothing_reaches_a_listener (void)
 {
   if (g_test_subprocess ())
     {
-      int port = atoi (g_getenv ("JR_PORT"));
+      g_assert_nonnull (g_getenv ("JR_PORT")); /* the listener is up */
       enter_or_die ();
-      int fd = socket (AF_INET, SOCK_STREAM, 0);
-      g_assert_cmpint (fd, ==, -1);
-      g_assert_cmpint (errno, ==, EACCES);
+      g_assert_true (refused (AF_INET, SOCK_STREAM));
       /* Not even a datagram can be sent. */
-      g_assert_cmpint (socket (AF_INET, SOCK_DGRAM, 0), ==, -1);
-      (void) port;
+      g_assert_true (refused (AF_INET, SOCK_DGRAM));
       return;
     }
   /* A real listener, outside the jail. */
@@ -211,11 +223,14 @@ test_nothing_reaches_a_listener (void)
 
   /* Sanity: outside the jail the same connect does arrive. */
   int probe = socket (AF_INET, SOCK_STREAM, 0);
-  g_assert_cmpint (connect (probe, (struct sockaddr *) &addr, sizeof addr), ==, 0);
-  int got = accept (srv, NULL, NULL);
+  gboolean connected = probe >= 0 && connect (probe, (struct sockaddr *) &addr, sizeof addr) == 0;
+  int got = connected ? accept (srv, NULL, NULL) : -1;
+  if (got >= 0)
+    close (got);
+  if (probe >= 0)
+    close (probe);
+  g_assert_true (connected);
   g_assert_cmpint (got, >=, 0);
-  close (got);
-  close (probe);
 
   g_auto (GStrv) env = g_environ_setenv (g_get_environ (), "JR_PORT", port, TRUE);
   g_test_trap_subprocess_with_envp (NULL, (const char *const *) env, 0, G_TEST_SUBPROCESS_DEFAULT);
@@ -223,9 +238,13 @@ test_nothing_reaches_a_listener (void)
 
   /* Nothing reached the listener, so nothing could be answered. */
   errno = 0;
-  g_assert_cmpint (accept (srv, NULL, NULL), ==, -1);
-  g_assert_true (errno == EAGAIN || errno == EWOULDBLOCK);
+  int late = accept (srv, NULL, NULL);
+  int err = errno;
+  if (late >= 0)
+    close (late);
   close (srv);
+  g_assert_cmpint (late, ==, -1);
+  g_assert_true (err == EAGAIN || err == EWOULDBLOCK);
 }
 
 /* ---- other doors ---------------------------------------------------- */
@@ -275,7 +294,7 @@ typedef struct {
   GMutex   lock;
   GCond    cond;
   gboolean go;
-  int      fd, err;
+  gboolean refused;
 } ThreadTry;
 
 static gpointer
@@ -286,8 +305,7 @@ thread_try (gpointer data)
   while (!t->go)
     g_cond_wait (&t->cond, &t->lock);
   g_mutex_unlock (&t->lock);
-  t->fd = socket (AF_INET6, SOCK_DGRAM, 0);
-  t->err = errno;
+  t->refused = refused (AF_INET6, SOCK_DGRAM);
   return NULL;
 }
 
@@ -296,7 +314,7 @@ test_existing_threads (void)
 {
   if (g_test_subprocess ())
     {
-      ThreadTry t = { .fd = 0 };
+      ThreadTry t = { .refused = FALSE };
       g_mutex_init (&t.lock);
       g_cond_init (&t.cond);
       GThread *th = g_thread_new ("early", thread_try, &t); /* started before the jail */
@@ -306,8 +324,7 @@ test_existing_threads (void)
       g_cond_signal (&t.cond);
       g_mutex_unlock (&t.lock);
       g_thread_join (th);
-      g_assert_cmpint (t.fd, ==, -1);
-      g_assert_cmpint (t.err, ==, EACCES);
+      g_assert_true (t.refused);
       return;
     }
   jailed (NULL);
@@ -351,7 +368,7 @@ test_twice (void)
       enter_or_die ();
       enter_or_die ();
       g_assert_cmpuint (jr_netjail_blocked (), ==, 0);
-      g_assert_cmpint (socket (AF_INET, SOCK_STREAM, 0), ==, -1);
+      g_assert_true (refused (AF_INET, SOCK_STREAM));
       g_assert_cmpuint (jr_netjail_blocked (), ==, 1);
       return;
     }
