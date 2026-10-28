@@ -4,6 +4,7 @@
  * and a lock change cut off half-way must leave the journal openable with
  * the old or the new PIN (never neither). */
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,10 +120,13 @@ change_pins (const char *path, int fd)
     }
 }
 
-/* Runs `child` in a forked process and kills it after a random moment.
+/* Runs `child` in a forked process and kills it after a random moment:
+ * counted from the start (it may die while still opening the file), or
+ * from its first acknowledged save, so a slow machine (coverage, CI)
+ * still gets saves cut off mid-way instead of only start-up crashes.
  * Returns everything it acknowledged before dying. */
 static GArray *
-run_and_kill (void (*child) (const char *, int), const char *path)
+run_and_kill (void (*child) (const char *, int), const char *path, gboolean after_first_save)
 {
   int fds[2] = { -1, -1 };
   if (pipe (fds) != 0)
@@ -139,14 +143,27 @@ run_and_kill (void (*child) (const char *, int), const char *path)
       _exit (3); /* never reached: the child runs until it is killed */
     }
   close (fds[1]);
+  GArray *acks = g_array_new (FALSE, FALSE, sizeof (Ack));
+  Ack ack;
+  if (after_first_save)
+    {
+      struct pollfd p = { .fd = fds[0], .events = POLLIN };
+      gboolean ready = poll (&p, 1, 60 * 1000) == 1 && read (fds[0], &ack, sizeof ack) == sizeof ack;
+      if (ready)
+        g_array_append_val (acks, ack);
+      else
+        {
+          kill (pid, SIGKILL);
+          g_printerr ("the writer acknowledged nothing within 60 s\n");
+          g_assert_not_reached ();
+        }
+    }
   g_usleep ((gulong) g_random_int_range (5, 80) * 1000);
   kill (pid, SIGKILL);
   int status = 0;
   g_assert_cmpint (waitpid (pid, &status, 0), ==, pid);
   g_assert_true (WIFSIGNALED (status) && WTERMSIG (status) == SIGKILL);
 
-  GArray *acks = g_array_new (FALSE, FALSE, sizeof (Ack));
-  Ack ack;
   ssize_t n;
   while ((n = read (fds[0], &ack, sizeof ack)) == sizeof ack)
     g_array_append_val (acks, ack);
@@ -192,7 +209,7 @@ test_entries_survive_kill (void)
 
   for (int round = 0; round < ROUNDS; round++)
     {
-      GArray *acks = run_and_kill (write_entries, path);
+      GArray *acks = run_and_kill (write_entries, path, round % 2 == 1);
       total += acks->len;
       assert_file_intact (path);
 
@@ -242,7 +259,7 @@ test_lock_change_survives_kill (void)
           jr_journal_close (j);
           current = 0;
         }
-      GArray *acks = run_and_kill (change_pins, path);
+      GArray *acks = run_and_kill (change_pins, path, round % 2 == 1);
       int acked = acks->len > 0 ? (int) g_array_index (acks, Ack, acks->len - 1).version : 0;
       changes += acks->len;
       g_array_unref (acks);
