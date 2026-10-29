@@ -162,6 +162,8 @@ test_default_paths (void)
                "Expected /usr and /etc readable");
       jr_case (&c, "no write to the system", !under_any (p->write, "/usr") && !under_any (p->write, "/etc"),
                "Expected /usr and /etc not writable");
+      jr_case (&c, "no shared temp folder", !listed (p->write, "/tmp") && !listed (p->write, "/var/tmp"),
+               "Expected /tmp and /var/tmp not writable");
       /* No listed folder holds the journal (no "/" or ~/.local/share). */
       for (int w = 0; w < 2; w++)
         for (char **l = w ? p->write : p->read; *l != NULL; l++)
@@ -205,6 +207,7 @@ static const AccessCase access_cases[] = {
   { "export a note",               CREATE, "Documents/Notes/prefix-sum.md",   TRUE },
   { "read a system file",          READ,   "/etc/hostname",                   TRUE },
   { "write a system folder",       CREATE, "/etc/planted-by-notes",           FALSE },
+  { "write the shared /tmp",       CREATE, "/tmp/planted-by-notes",           FALSE },
 };
 
 static gboolean

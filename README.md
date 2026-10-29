@@ -188,8 +188,8 @@ folder). They are study material, so the file is not encrypted.
   with network and AI, so before anything else it locks itself with
   Landlock (`src/notes/core/notesjail.c`), a kernel allow-list a program
   puts on itself: system folders and fonts to read; its own data,
-  settings, caches, the runtime folder, `/tmp` and `~/Documents/Notes` to
-  write. `~/.local/share/journal` and the login keyring are on no list, so
+  settings, caches, the runtime folder and `~/Documents/Notes` to write
+  (never `/tmp` or another folder others can write to). `~/.local/share/journal` and the login keyring are on no list, so
   opening, listing, linking or renaming them fails with `EACCES`, also
   through symlinks or `/proc/self/root`, and for every program Notes
   starts. Without that lock Notes opens no notes.

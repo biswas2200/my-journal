@@ -21,7 +21,7 @@ static const char *const SYSTEM_READ[] = {
   "/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt", "/snap",
   "/var/lib", "/var/cache", "/proc", "/sys", "/run", NULL,
 };
-static const char *const SYSTEM_WRITE[] = { "/tmp", "/var/tmp", "/dev", NULL };
+static const char *const SYSTEM_WRITE[] = { "/dev", NULL };
 
 static int
 landlock_abi (void)
@@ -64,16 +64,16 @@ jn_jail_default_paths (void)
   /* ~/.local/share item by item, so the journal and keyring stay out. */
   const char *data = g_get_user_data_dir ();
   GDir *dir = g_dir_open (data, 0, NULL);
-  const char *name;
-  while (dir != NULL && (name = g_dir_read_name (dir)) != NULL)
-    {
-      if (g_strv_contains (NEVER, name) || strcmp (name, NOTES_DIR) == 0)
-        continue;
-      g_autofree char *p = g_build_filename (data, name, NULL);
-      add (r, p);
-    }
   if (dir != NULL)
-    g_dir_close (dir);
+    {
+      for (const char *name = g_dir_read_name (dir); name != NULL; name = g_dir_read_name (dir))
+        if (!g_strv_contains (NEVER, name) && strcmp (name, NOTES_DIR) != 0)
+          {
+            g_autofree char *p = g_build_filename (data, name, NULL);
+            add (r, p);
+          }
+      g_dir_close (dir);
+    }
   add_home (r, ".icons");
   add_home (r, ".fonts");
   add_home (r, ".themes");
@@ -85,6 +85,13 @@ jn_jail_default_paths (void)
   add (w, g_get_user_cache_dir ());
   add (w, g_get_user_state_dir ());
   add (w, g_get_user_runtime_dir ());
+  /* Never a temp folder others can write to (/tmp): Notes needs none, and
+   * a shared folder is where another program could leave a trap. A
+   * private $TMPDIR (tests, some setups) is fine. */
+  struct stat st;
+  const char *tmp = g_get_tmp_dir ();
+  if (g_stat (tmp, &st) == 0 && S_ISDIR (st.st_mode) && st.st_uid == getuid () && (st.st_mode & 022) == 0)
+    add (w, tmp);
   g_autofree char *exports = jn_export_dir ();
   g_mkdir_with_parents (exports, 0700);
   add (w, exports);
@@ -95,15 +102,15 @@ jn_jail_default_paths (void)
   for (const char *const *root = roots; *root != NULL; root++)
     {
       GDir *objs = g_dir_open (*root, 0, NULL);
-      const char *obj;
-      while (objs != NULL && (obj = g_dir_read_name (objs)) != NULL)
+      if (objs == NULL)
+        continue;
+      for (const char *obj = g_dir_read_name (objs); obj != NULL; obj = g_dir_read_name (objs))
         if (g_str_has_suffix (obj, ".p"))
           {
             g_autofree char *p = g_build_filename (*root, obj, NULL);
             add (w, p);
           }
-      if (objs != NULL)
-        g_dir_close (objs);
+      g_dir_close (objs);
     }
 #endif
   g_ptr_array_add (r, NULL);

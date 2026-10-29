@@ -9,7 +9,8 @@
  *               the login keyring
  *   read/write  its own data (~/.local/share/journal-notes), settings and
  *               caches (~/.config, ~/.cache, ~/.local/state), the runtime
- *               folder, /tmp, /dev, and ~/Documents/Notes for exports
+ *               folder, /dev, and ~/Documents/Notes for exports; never a
+ *               temp folder others can write to (/tmp)
  * Everything else on disk, the journal first, fails with EACCES, also
  * through symlinks, hard links, renames or /proc, and for every program
  * Notes starts. It cannot be undone. */
