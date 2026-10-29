@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <string.h>
 #include <glib/gstdio.h>
+#include "md_view.h"
 #include "noteexport.h"
 #include "programs.h"
 
@@ -29,12 +30,13 @@ struct _JnWindow {
   GCancellable *ai_cancel;
   gint64        enhancing;     /* the session being enhanced, or 0 */
   GtkWidget    *enhance_button, *split, *ai_pane, *ai_title;
-  GtkTextView  *ai_view;
+  JnMdView     *ai_view;
+  gboolean      reference;     /* the topic reference is showing */
 };
 
 G_DEFINE_FINAL_TYPE (JnWindow, jn_window, GTK_TYPE_APPLICATION_WINDOW)
 
-typedef enum { ROW_SUBJECT, ROW_TOPIC, ROW_SESSION } RowKind;
+typedef enum { ROW_SUBJECT, ROW_TOPIC, ROW_SESSION, ROW_REFERENCE } RowKind;
 
 static gint64
 now (void)
@@ -43,6 +45,8 @@ now (void)
 }
 
 static void rebuild (JnWindow *win);
+static int copies_of (JnWindow *win, gint64 topic);
+static char *reference_markdown (JnWindow *win, gint64 topic);
 
 /* ---- header, span and status ---------------------------------------- */
 
@@ -50,6 +54,7 @@ static void
 set_status (JnWindow *win, const char *text)
 {
   gtk_label_set_text (GTK_LABEL (win->status), text != NULL ? text : "");
+  gtk_widget_set_tooltip_text (win->status, text); /* the whole message, when it is cut */
 }
 
 static void
@@ -76,6 +81,8 @@ update_span (JnWindow *win)
       gtk_label_set_text (GTK_LABEL (win->span), span);
       jn_session_clear (&s);
     }
+  else if (win->reference)
+    gtk_label_set_text (GTK_LABEL (win->span), "Topic reference \xc2\xb7 every enhanced copy, oldest first \xc2\xb7 read-only");
   else if (win->topic != 0)
     gtk_label_set_text (GTK_LABEL (win->span), "New session \xc2\xb7 starts when you type");
   else
@@ -88,11 +95,11 @@ update_page (JnWindow *win)
 {
   gboolean open = win->topic != 0;
   gtk_widget_set_visible (win->empty, !open);
-  gtk_widget_set_visible (GTK_WIDGET (win->editor), open);
-  gtk_widget_set_sensitive (win->new_session, open && win->session != 0);
+  gtk_widget_set_visible (GTK_WIDGET (win->editor), open && !win->reference);
+  gtk_widget_set_sensitive (win->new_session, open && (win->session != 0 || win->reference));
   gtk_widget_set_sensitive (win->export_button, open);
-  gtk_widget_set_sensitive (win->enhance_button, open && win->session != 0 && win->enhancer != NULL &&
-                                                 win->enhancing == 0);
+  gtk_widget_set_sensitive (win->enhance_button, open && !win->reference && win->session != 0 &&
+                                                 win->enhancer != NULL && win->enhancing == 0);
   gtk_widget_set_sensitive (win->add_topic, win->subject != 0);
   jn_editor_set_editable (win->editor, open);
   update_title (win);
@@ -168,6 +175,7 @@ static void show_enhanced (JnWindow *win);
 static void
 show_page (JnWindow *win, const char *body, const char *sources)
 {
+  win->reference = FALSE;
   jn_editor_load (win->editor, body, sources);
   win->dirty = FALSE;
   update_page (win);
@@ -273,6 +281,25 @@ jn_window_export (JnWindow *win, GError **error)
       return NULL;
     }
   jn_window_save (win);
+  if (win->reference)
+    {
+      g_autofree char *ref = reference_markdown (win, win->topic);
+      g_autofree char *folder_file = jn_export_file_name (sn);
+      folder_file[strlen (folder_file) - 3] = '\0';
+      g_autofree char *dir = g_build_filename (win->export_dir, folder_file, NULL);
+      if (g_mkdir_with_parents (dir, 0700) != 0)
+        {
+          int e2 = errno;
+          g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (e2), "Cannot create %s: %s", dir, g_strerror (e2));
+          return NULL;
+        }
+      g_autofree char *named = g_strdup_printf ("%s (reference)", tn);
+      g_autofree char *file = jn_export_file_name (named);
+      char *path = g_build_filename (dir, file, NULL);
+      if (!g_file_set_contents_full (path, ref, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, error))
+        g_clear_pointer (&path, g_free);
+      return path;
+    }
   JnExport *e = jn_export_new (sn, tn);
   GArray *ids = g_array_new (FALSE, FALSE, sizeof (gint64));
   jn_db_foreach_session (win->db, win->topic, collect_ids, ids);
@@ -331,7 +358,7 @@ row (JnWindow *win, RowKind kind, gint64 id, const char *text, gboolean current)
   gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
   GtkWidget *r = gtk_list_box_row_new ();
   gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (r), label);
-  static const char *css[] = { "subject-row", "topic-row", "session-row" };
+  static const char *css[] = { "subject-row", "topic-row", "session-row", "reference-row" };
   gtk_widget_add_css_class (r, css[kind]);
   if (current)
     gtk_widget_add_css_class (r, "current");
@@ -356,8 +383,10 @@ add_topic_row (gint64 id, const char *name, gpointer user)
   row (win, ROW_TOPIC, id, name, id == win->topic);
   if (id == win->topic)
     {
+      if (copies_of (win, id) > 0)
+        row (win, ROW_REFERENCE, id, "\xe2\x98\x85 Topic reference", win->reference);
       jn_db_foreach_session (win->db, id, add_session_row, win);
-      if (win->session == 0)
+      if (win->session == 0 && !win->reference)
         row (win, ROW_SESSION, 0, "new session", TRUE);
     }
 }
@@ -391,6 +420,7 @@ on_row_activated (GtkListBox *box, GtkListBoxRow *r, gpointer data)
     case ROW_SUBJECT: jn_window_select_subject (win, id); rebuild (win); break;
     case ROW_TOPIC:   jn_window_open_topic (win, id); break;
     case ROW_SESSION: if (id != 0) jn_window_open_session (win, id); break;
+    case ROW_REFERENCE: jn_window_open_reference (win, id); break;
     }
 }
 
@@ -467,21 +497,32 @@ adder (JnWindow *win, const char *label, gboolean topic)
 
 /* ---- the AI enhanced copy ---------------------------------------------------- */
 
+/* The AI pane takes the room your note does not need (the divider can be
+ * moved). */
+static void
+open_ai_pane (JnWindow *win)
+{
+  gtk_widget_set_visible (win->ai_pane, TRUE);
+}
+
 static void
 show_enhanced (JnWindow *win)
 {
   g_autofree char *model = NULL;
   gint64 at = 0;
   g_autofree char *md = win->session != 0 ? jn_db_get_enhanced (win->db, win->session, &model, &at) : NULL;
-  gtk_widget_set_visible (win->ai_pane, md != NULL);
   if (md == NULL)
-    return;
+    {
+      gtk_widget_set_visible (win->ai_pane, FALSE);
+      return;
+    }
+  open_ai_pane (win);
   g_autoptr (GDateTime) t = g_date_time_new_from_unix_local (at);
   g_autofree char *when = t != NULL ? g_date_time_format (t, "%-d %b, %H:%M") : g_strdup ("");
   g_autofree char *title = g_strdup_printf ("\xe2\x9c\xa6 Enhanced copy \xc2\xb7 read-only \xc2\xb7 %s \xc2\xb7 %s",
                                             model, when);
   gtk_label_set_text (GTK_LABEL (win->ai_title), title);
-  gtk_text_buffer_set_text (gtk_text_view_get_buffer (win->ai_view), md, -1);
+  jn_md_view_set_markdown (win->ai_view, md);
 }
 
 char *
@@ -489,10 +530,70 @@ jn_window_enhanced_text (JnWindow *win)
 {
   if (!gtk_widget_get_visible (win->ai_pane))
     return NULL;
-  GtkTextIter a, b;
-  GtkTextBuffer *buf = gtk_text_view_get_buffer (win->ai_view);
-  gtk_text_buffer_get_bounds (buf, &a, &b);
-  return gtk_text_buffer_get_text (buf, &a, &b, FALSE);
+  return g_strdup (jn_md_view_get_markdown (win->ai_view));
+}
+
+typedef struct {
+  JnExport *e;
+  int       n;
+} Ref;
+
+static void
+add_copy (gint64 session, gint64 started, gint64 ended, const char *markdown, gpointer user)
+{
+  (void) session;
+  Ref *r = user;
+  r->n++;
+  if (r->e != NULL)
+    jn_export_reference_add (r->e, started, ended, markdown);
+}
+
+static int
+copies_of (JnWindow *win, gint64 topic)
+{
+  Ref r = { NULL, 0 };
+  jn_db_foreach_enhanced (win->db, topic, add_copy, &r);
+  return r.n;
+}
+
+static char *
+reference_markdown (JnWindow *win, gint64 topic)
+{
+  gint64 subject = 0;
+  g_autofree char *sn = NULL, *tn = NULL;
+  if (!jn_db_get_topic (win->db, topic, &subject, &sn, &tn))
+    return NULL;
+  Ref r = { jn_export_reference_new (sn, tn), 0 };
+  jn_db_foreach_enhanced (win->db, topic, add_copy, &r);
+  return jn_export_finish (r.e);
+}
+
+void
+jn_window_open_reference (JnWindow *win, gint64 topic)
+{
+  close_page (win);
+  g_autofree char *md = reference_markdown (win, topic);
+  if (md == NULL)
+    return;
+  gint64 subject = 0;
+  g_autofree char *sn = NULL, *tn = NULL;
+  jn_db_get_topic (win->db, topic, &subject, &sn, &tn);
+  win->topic = topic;
+  win->subject = subject;
+  win->session = 0;
+  win->reference = TRUE;
+  g_autofree char *title = g_strdup_printf ("\xe2\x98\x85 Topic reference \xc2\xb7 %s \xc2\xb7 read-only", tn);
+  gtk_label_set_text (GTK_LABEL (win->ai_title), title);
+  jn_md_view_set_markdown (win->ai_view, md);
+  open_ai_pane (win);
+  update_page (win);
+  rebuild (win);
+}
+
+gboolean
+jn_window_in_reference (JnWindow *win)
+{
+  return win->reference;
 }
 
 gboolean
@@ -544,6 +645,7 @@ on_enhanced (const JnAiAnswer *answer, const char *error, gpointer data)
             set_status (win, "The enhanced copy could not be saved (the session was deleted?).");
           if (p->session == win->session)
             show_enhanced (win);
+          rebuild (win); /* the topic now has a reference */
         }
       gtk_button_set_label (GTK_BUTTON (win->enhance_button), "\xe2\x9c\xa6 Enhance");
       update_page (win);
@@ -872,6 +974,7 @@ jn_window_init (JnWindow *win)
   GtkWidget *info = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
   gtk_widget_add_css_class (info, "page-info");
   win->span = gtk_label_new ("");
+  gtk_label_set_ellipsize (GTK_LABEL (win->span), PANGO_ELLIPSIZE_END);
   gtk_widget_add_css_class (win->span, "faint");
   gtk_widget_set_hexpand (win->span, TRUE);
   gtk_label_set_xalign (GTK_LABEL (win->span), 0.0f);
@@ -890,11 +993,13 @@ jn_window_init (JnWindow *win)
   /* Your note on the left, the AI's copy on the right (when there is one). */
   win->split = gtk_paned_new (GTK_ORIENTATION_HORIZONTAL);
   gtk_paned_set_start_child (GTK_PANED (win->split), GTK_WIDGET (win->editor));
-  gtk_paned_set_resize_start_child (GTK_PANED (win->split), TRUE);
-  gtk_paned_set_shrink_end_child (GTK_PANED (win->split), FALSE);
+  gtk_paned_set_resize_start_child (GTK_PANED (win->split), FALSE);
+  gtk_paned_set_resize_end_child (GTK_PANED (win->split), TRUE);
+  gtk_paned_set_shrink_start_child (GTK_PANED (win->split), FALSE);
+  gtk_paned_set_shrink_end_child (GTK_PANED (win->split), TRUE); /* the copy wraps to any width */
+  gtk_widget_set_size_request (GTK_WIDGET (win->editor), 380, -1); /* your note never gets squashed */
   win->ai_pane = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
   gtk_widget_add_css_class (win->ai_pane, "ai-pane");
-  gtk_widget_set_size_request (win->ai_pane, 380, -1);
   GtkWidget *ai_head = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
   gtk_widget_add_css_class (ai_head, "ai-head");
   win->ai_title = gtk_label_new ("");
@@ -904,13 +1009,7 @@ jn_window_init (JnWindow *win)
   gtk_box_append (GTK_BOX (ai_head), win->ai_title);
   gtk_box_append (GTK_BOX (ai_head), header_button ("Hide", "Hide the enhanced copy", G_CALLBACK (on_hide_ai), win));
   gtk_box_append (GTK_BOX (win->ai_pane), ai_head);
-  win->ai_view = GTK_TEXT_VIEW (gtk_text_view_new ());
-  gtk_text_view_set_editable (win->ai_view, FALSE);
-  gtk_text_view_set_cursor_visible (win->ai_view, FALSE);
-  gtk_text_view_set_wrap_mode (win->ai_view, GTK_WRAP_WORD_CHAR);
-  gtk_text_view_set_left_margin (win->ai_view, 18);
-  gtk_text_view_set_right_margin (win->ai_view, 18);
-  gtk_text_view_set_top_margin (win->ai_view, 12);
+  win->ai_view = JN_MD_VIEW (jn_md_view_new ());
   gtk_widget_add_css_class (GTK_WIDGET (win->ai_view), "ai-text");
   GtkWidget *ai_scroll = gtk_scrolled_window_new ();
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (ai_scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -923,6 +1022,7 @@ jn_window_init (JnWindow *win)
   gtk_box_append (GTK_BOX (page), win->split);
   win->status = gtk_label_new ("");
   gtk_label_set_xalign (GTK_LABEL (win->status), 0.0f);
+  gtk_label_set_ellipsize (GTK_LABEL (win->status), PANGO_ELLIPSIZE_END); /* a long message never widens the page */
   gtk_widget_add_css_class (win->status, "statusbar");
   gtk_box_append (GTK_BOX (page), win->status);
   gtk_paned_set_end_child (GTK_PANED (paned), page);

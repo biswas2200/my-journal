@@ -118,6 +118,15 @@ go along as samples; filler words, emojis and hype are ruled out), may
 add one diagram, and ends with **Gaps**: what the sources cover that
 your note does not yet.
 
+The copy is shown formatted: headings, bullets, code, links (they open
+in your browser), `[n]` citations, and math as plain symbols (`1 ≤ k ≤ N`,
+never raw LaTeX). A diagram is drawn only after it passes a safety check
+that keeps shapes and text and drops scripts, links, images, style sheets,
+outside references and oversized drawings; one that fails is not shown.
+It shrinks to fit the pane. **★ Topic reference** in the sidebar puts every
+enhanced copy of the topic together, oldest first, and exports as
+`<topic> (reference).md`.
+
 The first time, Notes asks before anything is sent and says exactly
 what goes where. How it stays contained:
 
@@ -383,12 +392,14 @@ src/diary/    `journal-diary`: the Journal's main(), in the network jail
 src/notes/    `journal-notes`: Notes (study notes, AI enhanced copy)
   core/       plain C, no UI, nothing of the Journal: noteline (the six
               line kinds), notesdb (SQLite), notesjail (Landlock),
-              noteexport (Markdown export)
+              noteexport (Markdown export, topic reference), markdown
+              (reading the copy's Markdown), svgsafe (diagram safety)
   ai/         textify (page to text), netguard (which links and
               addresses), aiproto (sign-in, Gemini request and answer,
               Notes <-> helper messages), fetch (Sources), client (Notes'
               side), helper.c (`journal-ai`, the locked-down helper)
-  ui/         editor (formats, Markdown mode), notes_window
+  ui/         editor (formats, Markdown mode), md_view (the formatted
+              copy), notes_window
 src/core/   plain C, no UI, fully unit tested
   jdate       local days, parsing, formatting
   active_time seconds actually spent writing

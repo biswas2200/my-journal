@@ -41,8 +41,12 @@ void      jn_window_set_enhancer   (JnWindow *win, JnEnhancer *enhancer);
 /* Asks for an enhanced copy of the open session: the first time, after
  * a question about what is sent where. FALSE if it did not start. */
 gboolean  jn_window_enhance        (JnWindow *win);
-/* The enhanced copy on screen, or NULL. */
+/* The enhanced copy (or reference) on screen, as Markdown, or NULL. */
 char     *jn_window_enhanced_text  (JnWindow *win);
+/* The topic reference: every enhanced copy of the topic, oldest first,
+ * read-only; Export then writes "<topic> (reference).md". */
+void      jn_window_open_reference (JnWindow *win, gint64 topic);
+gboolean  jn_window_in_reference   (JnWindow *win);
 gboolean  jn_window_is_enhancing   (JnWindow *win);
 
 gint64    jn_window_topic          (JnWindow *win);

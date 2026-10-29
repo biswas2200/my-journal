@@ -71,19 +71,23 @@ button.enhance:hover { border-color: #6C8EBF; }
 textview.ai-text, textview.ai-text text {
   background-color: #0E1218;
   color: #DADFE6;
-  font-family: "JetBrains Mono", "IBM Plex Mono", "Ubuntu Sans Mono", "DejaVu Sans Mono", monospace;
-  font-size: 12px;
+  font-family: "Source Serif 4", "Source Serif Pro", "Noto Serif", "Liberation Serif", "DejaVu Serif", serif;
+  font-size: 15px;
 }
+/* AI diagrams are drawn for light paper: show them on a light card. */
+picture.diagram { background: #F5F7FA; border-radius: 8px; padding: 10px; margin: 6px 0 6px 20px; }
+row.reference-row { padding: 4px 14px 4px 44px; color: #9FB6D6; font-size: 11px; }
 
 /* Questions (the AI consent) in the same dark look. */
-window.dialog.alert, window.dialog.alert .background, window.dialog.alert > box, window.dialog.alert contents {
-  background-color: #121212;
-  color: #EDEDED;
-}
-window.dialog.alert .message-area label { color: #EDEDED; }
-window.dialog.alert .response-area button {
+window.dialog.message, window.dialog.message box.dialog-vbox, window.dialog.message box.titlebar,
+window.dialog.message headerbar { background-color: #121212; color: #EDEDED; box-shadow: none; }
+window.dialog.message label { color: #EDEDED; }
+window.dialog.message box.dialog-action-area button {
   background: #1A1A1A;
   color: #EDEDED;
+  border: none;
   border-top: 1px solid #2B2B2B;
+  box-shadow: none;
 }
-window.dialog.alert .response-area button:hover { background: #22303F; }
+window.dialog.message box.dialog-action-area button:hover { background: #22303F; }
+window.dialog.message box.dialog-action-area button:focus-visible { outline-color: #6C8EBF; }

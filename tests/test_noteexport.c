@@ -127,6 +127,45 @@ test_topic (void)
   g_assert_nonnull (strstr (esc, "\n\\# not a heading\n"));
 }
 
+/* A topic reference: every enhanced copy of the topic, oldest first,
+ * under its session's time; their titles and header lines go, their
+ * headings move down a level, their sources stay with them. */
+static void
+test_reference (void)
+{
+  JnExport *e = jn_export_reference_new ("DSA", "Prefix sum");
+  jn_export_reference_add (e, T1405, T1405 + 95 * MINUTE,
+    "# Prefix sum (enhanced)\n\nDSA \xc2\xb7 studied 28 Oct 2026, 14:05–15:40 \xc2\xb7 written by m from your note\n\n"
+    "Sources:\n1. <https://a.example/x>\n\n## Idea\n- pre[0] = 0 [1]\n\n## Gaps\n- 2D\n");
+  jn_export_reference_add (e, T1405 + 86400, T1405 + 86400 + 30 * MINUTE,
+    "# Prefix sum (enhanced)\n\nDSA \xc2\xb7 studied 29 Oct · written by m from your note\n\n## 2D\n- pre[i][j] [1]\n");
+  g_autofree char *md = jn_export_finish (e);
+  static const char want[] =
+    "# Prefix sum (reference)\n"
+    "\n"
+    "DSA \xc2\xb7 2 sessions with an enhanced copy, written by the AI from your notes\n"
+    "\n"
+    "## 28 Oct 2026, 14:05–15:40\n"
+    "\n"
+    "Sources:\n"
+    "1. <https://a.example/x>\n"
+    "\n"
+    "### Idea\n"
+    "- pre[0] = 0 [1]\n"
+    "\n"
+    "### Gaps\n"
+    "- 2D\n"
+    "\n"
+    "## 29 Oct 2026, 14:05–14:35\n"
+    "\n"
+    "### 2D\n"
+    "- pre[i][j] [1]\n";
+  g_assert_cmpstr (md, ==, want);
+  JnExport *none = jn_export_reference_new ("DSA", "Empty");
+  g_autofree char *empty = jn_export_finish (none);
+  g_assert_cmpstr (empty, ==, "# Empty (reference)\n\nDSA \xc2\xb7 no enhanced copies yet\n");
+}
+
 int
 main (int argc, char **argv)
 {
@@ -136,5 +175,6 @@ main (int argc, char **argv)
   g_test_add_func ("/noteexport/span", test_span);
   g_test_add_func ("/noteexport/file-name", test_file_name);
   g_test_add_func ("/noteexport/topic", test_topic);
+  g_test_add_func ("/noteexport/reference", test_reference);
   return g_test_run ();
 }

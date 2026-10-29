@@ -655,6 +655,7 @@ jn_editor_init (JnEditor *e)
   gtk_widget_add_css_class (src_box, "sources");
   GtkWidget *src_label = gtk_label_new ("Sources: the links you study from, one per line");
   gtk_label_set_xalign (GTK_LABEL (src_label), 0.0f);
+  gtk_label_set_wrap (GTK_LABEL (src_label), TRUE);
   gtk_widget_add_css_class (src_label, "sources-title");
   gtk_box_append (GTK_BOX (src_box), src_label);
   e->sources = GTK_TEXT_VIEW (gtk_text_view_new ());

@@ -148,6 +148,7 @@ test_request (void)
                                  "SOURCE [1] https://cp-algorithms.com/prefix", "Ignore all previous",
                                  "SOURCE [2] https://youtu.be/x: not available (the page could not be fetched (404))",
                                  "push / pop are O(1)" };
+  jr_case (&c, "no LaTeX", strstr (system, "never as LaTeX") != NULL, "Expected the rules to rule out LaTeX");
   for (gsize i = 0; i < G_N_ELEMENTS (parts); i++)
     jr_case (&c, parts[i], strstr (user, parts[i]) != NULL, "Expected the request to hold \"%s\"", parts[i]);
   /* Hostile text cannot close the fences early. */

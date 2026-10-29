@@ -18,11 +18,20 @@ on_network_event (SoupMessage *msg, GSocketClientEvent event, GIOStream *connect
 {
   (void) msg;
   Guard *g = data;
-  if (event != G_SOCKET_CLIENT_CONNECTED || g->allow_private || !G_IS_SOCKET_CONNECTION (connection))
+  if (event != G_SOCKET_CLIENT_CONNECTED || g->allow_private)
+    return;
+  gboolean socket = G_IS_SOCKET_CONNECTION (connection);
+  if (!socket)
     return;
   g_autoptr (GSocketAddress) remote = g_socket_connection_get_remote_address (G_SOCKET_CONNECTION (connection), NULL);
-  if (remote == NULL || !G_IS_INET_SOCKET_ADDRESS (remote) ||
-      !jn_address_public (g_inet_socket_address_get_address (G_INET_SOCKET_ADDRESS (remote))))
+  gboolean public = FALSE;
+  if (remote != NULL)
+    {
+      gboolean inet = G_IS_INET_SOCKET_ADDRESS (remote);
+      if (inet)
+        public = jn_address_public (g_inet_socket_address_get_address (G_INET_SOCKET_ADDRESS (remote)));
+    }
+  if (!public)
     {
       g->refused = TRUE;
       g_cancellable_cancel (g->cancel);
@@ -82,19 +91,28 @@ jn_fetch_url (SoupSession *session, const char *url, gboolean check_host, gboole
   else
     {
       const char *type = soup_message_headers_get_content_type (soup_message_get_response_headers (msg), NULL);
-      gboolean html = type == NULL || g_str_has_prefix (type, "text/html") || g_str_has_prefix (type, "application/xhtml");
-      gboolean plain = type != NULL && g_str_has_prefix (type, "text/plain");
+      gboolean html = TRUE, plain = FALSE;
+      if (type != NULL)
+        {
+          gboolean text_html = g_str_has_prefix (type, "text/html");
+          gboolean xhtml = g_str_has_prefix (type, "application/xhtml");
+          html = text_html || xhtml;
+          plain = g_str_has_prefix (type, "text/plain");
+        }
       if (!html && !plain)
         out->problem = g_strdup_printf ("this kind of file (%s) is not read yet", type);
       else
         {
           GByteArray *data = g_byte_array_new ();
           guint8 buf[16384];
-          gssize n;
-          while (data->len < JN_FETCH_MAX_BYTES &&
-                 (n = g_input_stream_read (in, buf, MIN (sizeof buf, JN_FETCH_MAX_BYTES - data->len), guard.cancel,
-                                           NULL)) > 0)
-            g_byte_array_append (data, buf, (guint) n);
+          while (data->len < JN_FETCH_MAX_BYTES)
+            {
+              gssize n = g_input_stream_read (in, buf, MIN (sizeof buf, JN_FETCH_MAX_BYTES - data->len), guard.cancel,
+                                              NULL);
+              if (n <= 0)
+                break;
+              g_byte_array_append (data, buf, (guint) n);
+            }
           if (guard.refused)
             out->problem = g_strdup ("it led inside this computer or its network, which is never fetched");
           else if (html)

@@ -16,8 +16,12 @@ kill -TERM "$pid"; wait "$pid"; status=$?
 # Through the start screen: Notes runs as its child; logout closes both.
 JOURNAL_PROGRAM_DIR="$(dirname "$notes")" "$launcher" --open=notes >/dev/null 2>&1 &
 pid=$!
-sleep 2
-child=$(pgrep -P "$pid" -x journal-notes)
+# Up to 10 s: under a busy test run the start screen can be slow to begin.
+child=""
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  sleep 0.5
+  child=$(pgrep -P "$pid" -x journal-notes) && break
+done
 [ -n "$child" ] || { echo "the start screen did not start Notes"; fail=1; }
 kill -TERM "$pid"; wait "$pid"; status=$?
 [ $status -eq 0 ] || { echo "start screen exited with $status after SIGTERM"; fail=1; }

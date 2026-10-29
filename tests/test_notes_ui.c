@@ -10,6 +10,7 @@
 #include <gtk/gtk.h>
 #include "cases.h"
 #include "editor.h"
+#include "md_view.h"
 #include "notes_window.h"
 #include "notesjail.h"
 #include "programs.h"
@@ -420,6 +421,92 @@ test_window_flow (void)
   g_rmdir (dir);
 }
 
+/* The enhanced copy shown formatted: no markup left on screen, links
+ * with their address, a clean diagram drawn, an unsafe one refused. */
+static void
+test_md_view (void)
+{
+  /* As in the window: inside a scrolled view, a fixed width. */
+  GtkWidget *w = gtk_window_new ();
+  gtk_window_set_default_size (GTK_WINDOW (w), 520, 600);
+  JnMdView *v = JN_MD_VIEW (jn_md_view_new ());
+  GtkWidget *scroll = gtk_scrolled_window_new ();
+  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroll), GTK_WIDGET (v));
+  gtk_window_set_child (GTK_WINDOW (w), scroll);
+  gtk_window_present (GTK_WINDOW (w));
+  static const char md[] =
+    "# Prefix sum (enhanced)\n"
+    "\n"
+    "## Idea\n"
+    "- pre[i] is a **sum** of the first *i* items [1]\n"
+    "  - build it once\n"
+    "→ each query is `O(1)`\n"
+    "1. read the input\n"
+    "See [USACO](https://usaco.guide/silver/prefix-sums).\n"
+    "```python\n"
+    "def psum(a):\n"
+    "    return a\n"
+    "```\n"
+    "```svg\n"
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"60\"><script>x()</script>"
+    "<rect x=\"5\" y=\"5\" width=\"100\" height=\"30\" fill=\"#93c5fd\"/></svg>\n"
+    "```\n"
+    "```svg\n"
+    "<!DOCTYPE svg [<!ENTITY a \"x\">]><svg xmlns=\"http://www.w3.org/2000/svg\"><text>&a;</text></svg>\n"
+    "```\n"
+    "---\n";
+  jn_md_view_set_markdown (v, md);
+  pump (100);
+  GtkTextBuffer *b = gtk_text_view_get_buffer (GTK_TEXT_VIEW (v));
+  GtkTextIter a, z;
+  gtk_text_buffer_get_bounds (b, &a, &z);
+  g_autofree char *shown = gtk_text_buffer_get_text (b, &a, &z, FALSE);
+  JrCases c = { "md view", 0, 0 };
+  static const char *absent[] = { "##", "**", "```", "<svg", "](http", "script" };
+  for (gsize i = 0; i < G_N_ELEMENTS (absent); i++)
+    jr_case (&c, absent[i], strstr (shown, absent[i]) == NULL, "Expected no \"%s\" on screen: %s", absent[i], shown);
+  static const char *present[] = { "Prefix sum (enhanced)", "\xe2\x97\x8f pre[i] is a sum of the first i items [1]",
+                                   "\xe2\x97\xa6 build it once", "\xe2\x86\x92 each query is O(1)", "1. read the input",
+                                   "See USACO.", "python\ndef psum(a):\n    return a", "did not pass the safety check" };
+  for (gsize i = 0; i < G_N_ELEMENTS (present); i++)
+    jr_case (&c, present[i], strstr (shown, present[i]) != NULL, "Expected \"%s\" on screen: %s", present[i], shown);
+  int refused = 0;
+  jr_case (&c, "one diagram drawn, one refused", jn_md_view_diagrams (v, &refused) == 1 && refused == 1,
+           "Got %d drawn, %d refused", jn_md_view_diagrams (v, NULL), refused);
+  const char *usaco = strstr (shown, "USACO");
+  int at = usaco != NULL ? (int) g_utf8_pointer_to_offset (shown, usaco) : 0;
+  jr_case (&c, "the link has its address", g_strcmp0 (jn_md_view_link_at (v, at), "https://usaco.guide/silver/prefix-sums") == 0,
+           "Got %s", jn_md_view_link_at (v, at));
+  jr_case (&c, "plain text is no link", jn_md_view_link_at (v, 0) == NULL, "Expected none");
+  /* The title is set large. */
+  GtkTextIter first;
+  gtk_text_buffer_get_start_iter (b, &first);
+  GSList *tags = gtk_text_iter_get_tags (&first);
+  double scale = 1.0;
+  for (GSList *l = tags; l != NULL; l = l->next)
+    {
+      gboolean set = FALSE;
+      double sc = 1.0;
+      g_object_get (l->data, "scale-set", &set, "scale", &sc, NULL);
+      if (set)
+        scale = MAX (scale, sc);
+    }
+  g_slist_free (tags);
+  jr_case (&c, "title is large", scale > 1.3, "Got scale %.2f", scale);
+  jr_case (&c, "markdown kept", g_strcmp0 (jn_md_view_get_markdown (v), md) == 0, "Expected the source kept");
+  /* A diagram wider than the view is scaled down: the view never needs
+   * more width than it has (else the pane would run off the window). */
+  jn_md_view_set_markdown (v, "```svg\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1200\" height=\"300\">"
+                              "<rect width=\"1200\" height=\"300\" fill=\"#93c5fd\"/></svg>\n```\n");
+  pump (200);
+  int need = 0, room = 520; /* the window's width above; GTK would grow it to fit */
+  gtk_widget_measure (GTK_WIDGET (v), GTK_ORIENTATION_HORIZONTAL, -1, &need, NULL, NULL, NULL);
+  jr_case (&c, "wide diagram fits", need <= room, "Needs %d px, the pane has %d px", need, room);
+  jr_cases_done (&c);
+  gtk_window_destroy (GTK_WINDOW (w));
+}
+
 /* ---- the AI: a stand-in that records what it is sent ------------------ */
 
 typedef struct {
@@ -494,6 +581,20 @@ close_other_windows (GtkWindow *keep)
   g_list_free (all);
 }
 
+static GtkWidget *
+find_row_label (GtkWidget *root, const char *text)
+{
+  if (GTK_IS_LABEL (root) && g_strcmp0 (gtk_label_get_text (GTK_LABEL (root)), text) == 0)
+    return root;
+  for (GtkWidget *c = gtk_widget_get_first_child (root); c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      GtkWidget *f = find_row_label (c, text);
+      if (f != NULL)
+        return f;
+    }
+  return NULL;
+}
+
 static void
 test_enhance (void)
 {
@@ -545,6 +646,8 @@ test_enhance (void)
   type (e, "⏎range sums");
   pump (300);
   g_assert_false (jn_window_is_enhancing (win));
+  /* The list offers the topic reference as soon as the copy is in. */
+  g_assert_nonnull (find_row_label (GTK_WIDGET (win), "\xe2\x98\x85 Topic reference"));
   g_autofree char *shown = jn_window_enhanced_text (win);
   g_assert_nonnull (shown);
   g_assert_true (g_str_has_prefix (shown, "# Prefix sum (enhanced)\n\nDSA \xc2\xb7 studied "));
@@ -565,15 +668,42 @@ test_enhance (void)
   g_autofree char *again = jn_window_enhanced_text (win);
   g_assert_cmpstr (again, ==, stored);
 
-  /* An error: said plainly, the old copy kept. */
-  fake.error = "Gemini is busy or over its quota; try again in a minute.";
+  /* The topic reference: every copy of the topic, one document. */
+  g_assert_false (jn_window_in_reference (win));
+  jn_window_open_reference (win, jn_window_topic (win));
+  g_assert_true (jn_window_in_reference (win));
+  g_autofree char *ref = jn_window_enhanced_text (win);
+  g_assert_true (g_str_has_prefix (ref, "# Prefix sum (reference)\n\nDSA \xc2\xb7 1 session with an enhanced copy"));
+  g_assert_nonnull (strstr (ref, "### Idea\n- more [1]\n"));
+  g_autoptr (GError) xerr = NULL;
+  g_autofree char *ref_file = jn_window_export (win, &xerr);
+  g_assert_no_error (xerr);
+  g_autofree char *want_ref = g_build_filename (dir, "DSA", "Prefix sum (reference).md", NULL);
+  g_assert_cmpstr (ref_file, ==, want_ref);
+  g_assert_true (g_file_test (ref_file, G_FILE_TEST_EXISTS));
+  jn_window_open_session (win, session); /* back to the note */
+  g_assert_false (jn_window_in_reference (win));
+
+  /* An error: said plainly, the old copy kept, and however long the
+   * message, the page does not grow wider than the window. */
+  fake.error = "Gemini is busy or over its quota; try again in a minute (Resource exhausted. Please try again later. "
+               "Please refer to https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 for more details.)";
   g_assert_true (jn_window_enhance (win));
   pump (300);
+  /* The page (note, copy, status line) needs no more width than it has:
+   * otherwise its right side would be cut off. */
+  GtkWidget *page = gtk_widget_get_parent (gtk_widget_get_parent (GTK_WIDGET (e)));
+  graphene_point_t right = GRAPHENE_POINT_INIT ((float) gtk_widget_get_width (page), 0), in_win;
+  g_assert_true (gtk_widget_compute_point (page, GTK_WIDGET (win), &right, &in_win));
+  g_assert_cmpfloat (in_win.x, <=, (float) gtk_widget_get_width (GTK_WIDGET (win)) + 0.5f);
   g_autofree char *kept = jn_db_get_enhanced (db, session, NULL, NULL);
   g_assert_cmpstr (kept, ==, stored);
 
   gtk_window_close (GTK_WINDOW (win));
   pump (100);
+  g_remove (ref_file);
+  g_autofree char *ref_dir = g_path_get_dirname (ref_file);
+  g_rmdir (ref_dir);
   g_free (fake.note);
   g_free (fake.subject);
   g_free (fake.topic);
@@ -607,5 +737,6 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/markdown-mode", test_markdown_mode);
   g_test_add_func ("/notes-ui/window-flow", test_window_flow);
   g_test_add_func ("/notes-ui/enhance", test_enhance);
+  g_test_add_func ("/notes-ui/md-view", test_md_view);
   return g_test_run ();
 }

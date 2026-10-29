@@ -389,6 +389,18 @@ jn_db_get_enhanced (JnDb *db, gint64 session, char **model, gint64 *created)
   return md;
 }
 
+void
+jn_db_foreach_enhanced (JnDb *db, gint64 topic, JnCopyFunc fn, gpointer user)
+{
+  sqlite3_stmt *s = prepare (db, "SELECT s.id, s.started, s.ended, e.markdown FROM enhanced e"
+                                 " JOIN sessions s ON s.id = e.session WHERE s.topic = ? ORDER BY s.started, s.id");
+  bind_int (s, 1, topic);
+  while (s != NULL && sqlite3_step (s) == SQLITE_ROW)
+    fn (sqlite3_column_int64 (s, 0), sqlite3_column_int64 (s, 1), sqlite3_column_int64 (s, 2),
+        (const char *) sqlite3_column_text (s, 3), user);
+  sqlite3_finalize (s);
+}
+
 gboolean
 jn_db_set_setting (JnDb *db, const char *key, const char *value)
 {

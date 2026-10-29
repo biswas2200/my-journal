@@ -35,5 +35,11 @@ char     *jn_export_dir         (void);
 JnExport *jn_export_new         (const char *subject, const char *topic);
 /* Sessions in the order they should appear (oldest first). */
 void      jn_export_add_session (JnExport *e, gint64 started, gint64 ended, const char *sources, const char *body);
+/* A topic reference instead: every enhanced copy of the topic, oldest
+ * first, each under its session's time, its title and header line left
+ * out, its headings one level down, its sources kept with it. Finished
+ * with jn_export_finish like a topic. */
+JnExport *jn_export_reference_new (const char *subject, const char *topic);
+void      jn_export_reference_add (JnExport *e, gint64 started, gint64 ended, const char *enhanced);
 /* The Markdown text; frees `e`. */
 char     *jn_export_finish      (JnExport *e);

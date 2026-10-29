@@ -8,6 +8,10 @@
 
 struct JnExport {
   GString *md;
+  /* A topic reference: its header is written at the end. */
+  gboolean reference;
+  char    *subject, *topic;
+  int      copies;
 };
 
 static char *
@@ -118,9 +122,75 @@ jn_export_add_session (JnExport *e, gint64 started, gint64 ended, const char *so
     }
 }
 
+JnExport *
+jn_export_reference_new (const char *subject, const char *topic)
+{
+  JnExport *e = g_new0 (JnExport, 1);
+  e->md = g_string_new (NULL);
+  e->reference = TRUE;
+  e->subject = g_strdup (subject);
+  e->topic = g_strdup (topic);
+  return e;
+}
+
+void
+jn_export_reference_add (JnExport *e, gint64 started, gint64 ended, const char *enhanced)
+{
+  g_autofree char *span = jn_format_span (started, ended);
+  g_string_append_printf (e->md, "\n## %s\n\n", span);
+  e->copies++;
+  g_auto (GStrv) lines = g_strsplit (enhanced != NULL ? enhanced : "", "\n", -1);
+  int i = 0;
+  if (lines[0] != NULL && strncmp (lines[0], "# ", 2) == 0)
+    i++; /* the copy's own title */
+  while (lines[i] != NULL && *lines[i] == '\0')
+    i++;
+  if (lines[i] != NULL && strstr (lines[i], "written by") != NULL)
+    {
+      i++; /* its header line: the reference says it once */
+      while (lines[i] != NULL && *lines[i] == '\0')
+        i++;
+    }
+  GString *body = g_string_new (NULL);
+  gboolean fence = FALSE;
+  for (; lines[i] != NULL; i++)
+    {
+      const char *l = lines[i];
+      const char *t = l;
+      while (*t == ' ')
+        t++;
+      if (strncmp (t, "```", 3) == 0 || strncmp (t, "~~~", 3) == 0)
+        fence = !fence;
+      if (!fence && l[0] == '#' && strspn (l, "#") < 6 && l[strspn (l, "#")] == ' ')
+        g_string_append_c (body, '#'); /* one level down */
+      g_string_append (body, l);
+      g_string_append_c (body, '\n');
+    }
+  /* One line end at the end, no trailing blank lines. */
+  while (body->len >= 2 && body->str[body->len - 1] == '\n' && body->str[body->len - 2] == '\n')
+    g_string_truncate (body, body->len - 1);
+  g_string_append (e->md, body->str);
+  g_string_free (body, TRUE);
+}
+
 char *
 jn_export_finish (JnExport *e)
 {
+  if (e->reference)
+    {
+      g_autofree char *t = jn_line_format (JN_TEXT, e->topic);
+      GString *head = g_string_new (NULL);
+      g_string_append_printf (head, "# %s (reference)\n\n", t);
+      if (e->copies == 0)
+        g_string_append_printf (head, "%s \xc2\xb7 no enhanced copies yet\n", e->subject);
+      else
+        g_string_append_printf (head, "%s \xc2\xb7 %d %s with an enhanced copy, written by the AI from your notes\n",
+                                e->subject, e->copies, e->copies == 1 ? "session" : "sessions");
+      g_string_prepend (e->md, head->str);
+      g_string_free (head, TRUE);
+      g_free (e->subject);
+      g_free (e->topic);
+    }
   char *md = g_string_free (e->md, FALSE);
   g_free (e);
   return md;

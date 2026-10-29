@@ -170,7 +170,8 @@ static const char RULES[] =
   "comprehensive, tapestry, \"in conclusion\", \"it's important to note\". No emojis. No exclamation marks. Do not "
   "talk to the reader and do not praise the note.\n"
   "- End each fact you add from a source with [n], the number of that source.\n"
-  "- Code and formulas go in fenced code blocks with their language.\n"
+  "- Code and formulas go in fenced code blocks with their language. Write math as plain text or in backticks "
+  "(1 <= k <= N), never as LaTeX ($...$, \\le, \\frac).\n"
   "- At most one diagram, only where it explains better than words: one fenced ```svg block, at most 640 wide, "
   "with no script, no links, no external images and no foreignObject.\n"
   "- Finish with \"## Gaps\": what the sources cover that the note does not yet, as bullets. Leave it out if there "
@@ -440,9 +441,14 @@ jn_ai_request_from_json (const char *json, gssize len, JnAiRequest *out, GError 
   JsonObject *o = parse_object (json, len, &p);
   const char *endpoint = str (o, "endpoint"), *token = str (o, "token"), *note = str (o, "note");
   JsonArray *ports = arr (o, "ports");
-  gboolean ok = endpoint != NULL && token != NULL && note != NULL && ports != NULL &&
-                (g_str_has_prefix (endpoint, "https://") || g_str_has_prefix (endpoint, "http://")) &&
-                json_array_get_length (ports) >= 1 && json_array_get_length (ports) <= JN_AI_MAX_PORTS;
+  gboolean ok = endpoint != NULL && token != NULL && note != NULL && ports != NULL;
+  if (ok)
+    {
+      gboolean https = g_str_has_prefix (endpoint, "https://");
+      gboolean http = g_str_has_prefix (endpoint, "http://");
+      guint n_ports = json_array_get_length (ports);
+      ok = (https || http) && n_ports >= 1 && n_ports <= JN_AI_MAX_PORTS;
+    }
   for (guint i = 0; ok && i < json_array_get_length (ports); i++)
     {
       JsonNode *n = json_array_get_element (ports, i);

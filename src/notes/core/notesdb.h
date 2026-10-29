@@ -57,6 +57,10 @@ gboolean jn_db_set_enhanced     (JnDb *db, gint64 session, const char *markdown,
 /* NULL if there is none; *model and *created are filled in when found. */
 char    *jn_db_get_enhanced     (JnDb *db, gint64 session, char **model, gint64 *created);
 
+/* A topic's enhanced copies, oldest session first. */
+typedef void (*JnCopyFunc) (gint64 session, gint64 started, gint64 ended, const char *markdown, gpointer user);
+void     jn_db_foreach_enhanced (JnDb *db, gint64 topic, JnCopyFunc fn, gpointer user);
+
 /* Small settings (e.g. "ai_consent"). */
 gboolean jn_db_set_setting      (JnDb *db, const char *key, const char *value);
 char    *jn_db_get_setting      (JnDb *db, const char *key);

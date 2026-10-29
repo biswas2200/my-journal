@@ -54,6 +54,30 @@ add_home (GPtrArray *a, const char *rel)
   add (a, p);
 }
 
+/* Coverage builds only: the object folders that receive .gcda files. */
+static void
+add_gcov_dirs (GPtrArray *w)
+{
+#ifdef JN_GCOV_ROOT
+  static const char *const roots[] = { JN_GCOV_ROOT, JN_GCOV_ROOT "/tests", NULL };
+  for (const char *const *root = roots; *root != NULL; root++)
+    {
+      GDir *objs = g_dir_open (*root, 0, NULL);
+      if (objs == NULL)
+        continue;
+      for (const char *obj = g_dir_read_name (objs); obj != NULL; obj = g_dir_read_name (objs))
+        if (g_str_has_suffix (obj, ".p"))
+          {
+            g_autofree char *p = g_build_filename (*root, obj, NULL);
+            add (w, p);
+          }
+      g_dir_close (objs);
+    }
+#else
+  (void) w;
+#endif
+}
+
 JnJailPaths *
 jn_jail_default_paths (void)
 {
@@ -110,23 +134,7 @@ jn_jail_default_paths (void)
   g_mkdir_with_parents (exports, 0700);
   add (w, exports);
 
-#ifdef JN_GCOV_ROOT
-  /* Coverage builds only: the object folders that receive .gcda files. */
-  static const char *const roots[] = { JN_GCOV_ROOT, JN_GCOV_ROOT "/tests", NULL };
-  for (const char *const *root = roots; *root != NULL; root++)
-    {
-      GDir *objs = g_dir_open (*root, 0, NULL);
-      if (objs == NULL)
-        continue;
-      for (const char *obj = g_dir_read_name (objs); obj != NULL; obj = g_dir_read_name (objs))
-        if (g_str_has_suffix (obj, ".p"))
-          {
-            g_autofree char *p = g_build_filename (*root, obj, NULL);
-            add (w, p);
-          }
-      g_dir_close (objs);
-    }
-#endif
+  add_gcov_dirs (w);
   g_ptr_array_add (r, NULL);
   g_ptr_array_add (w, NULL);
   JnJailPaths *paths = g_new0 (JnJailPaths, 1);
@@ -157,7 +165,10 @@ jn_jail_helper_paths (const guint16 *ports, gsize n_ports)
     paths->read[n + 1] = NULL;
   }
 #endif
-  paths->write = g_new0 (char *, 1);
+  GPtrArray *w = g_ptr_array_new ();
+  add_gcov_dirs (w); /* nothing outside coverage builds */
+  g_ptr_array_add (w, NULL);
+  paths->write = (char **) g_ptr_array_free (w, FALSE);
   paths->limit_net = TRUE;
   paths->n_ports = MIN (n_ports, (gsize) JN_JAIL_MAX_PORTS);
   for (gsize i = 0; i < paths->n_ports; i++)

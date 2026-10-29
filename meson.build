@@ -79,6 +79,8 @@ notes_core_lib = static_library('notes-core',
   'src/notes/core/notesdb.c',
   'src/notes/core/notesjail.c',
   'src/notes/core/noteexport.c',
+  'src/notes/core/markdown.c',
+  'src/notes/core/svgsafe.c',
   c_args : notes_core_args,
   dependencies : [glib_dep, gio_dep, sqlite_dep],
 )
@@ -164,17 +166,19 @@ notes_resources = gnome.compile_resources('notes-resources',
   source_dir : 'data/notes',
   c_name : 'notes',
 )
+rsvg_dep = dependency('librsvg-2.0', version : '>= 2.52')
 notes_ui_lib = static_library('notes-ui',
   'src/notes/ui/editor.c',
+  'src/notes/ui/md_view.c',
   'src/notes/ui/notes_window.c',
   notes_resources[1],
-  dependencies : [notes_core_dep, notes_client_dep, gtk_dep, programs_dep],
+  dependencies : [notes_core_dep, notes_client_dep, gtk_dep, rsvg_dep, programs_dep],
 )
 notes_ui_dep = declare_dependency(
   link_with : notes_ui_lib,
   sources : notes_resources,
   include_directories : include_directories('src/notes/ui'),
-  dependencies : [notes_core_dep, notes_client_dep, gtk_dep, programs_dep],
+  dependencies : [notes_core_dep, notes_client_dep, gtk_dep, rsvg_dep, programs_dep],
 )
 notes_exe = executable('journal-notes', 'src/notes/main.c',
   dependencies : notes_ui_dep,

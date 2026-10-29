@@ -20,6 +20,8 @@
  *   enhance ID MD MODEL @T -> true|false  store the AI's enhanced copy
  *   enhanced ID          -> model@T:markdown | null
  *   set KEY VALUE        -> true         setting KEY -> value | null
+ *   copies TOPIC         -> id@start:md|... the topic's enhanced copies,
+ *                                        oldest session first
  *   style TOPIC N        -> body|body    up to N recent notes from other
  *                                        topics, newest first, to show the
  *                                        AI how this person writes
@@ -60,6 +62,16 @@ collect_session (gint64 id, gint64 started, gint64 ended, gpointer user)
   if (s->len > 0)
     g_string_append_c (s, ',');
   g_string_append_printf (s, "%" G_GINT64_FORMAT "@%" G_GINT64_FORMAT "-%" G_GINT64_FORMAT, id, started, ended);
+}
+
+static void
+collect_copy (gint64 id, gint64 started, gint64 ended, const char *markdown, gpointer user)
+{
+  (void) ended;
+  GString *s = user;
+  if (s->len > 0)
+    g_string_append_c (s, '|');
+  g_string_append_printf (s, "%" G_GINT64_FORMAT "@%" G_GINT64_FORMAT ":%s", id, started, markdown);
 }
 
 static gint64
@@ -150,6 +162,12 @@ run_op (Store *st, char **a, int n)
     {
       char *v = jn_db_get_setting (st->db, a[1]);
       return v != NULL ? v : g_strdup ("null");
+    }
+  if (strcmp (op, "copies") == 0 && n == 2)
+    {
+      GString *s = g_string_new (NULL);
+      jn_db_foreach_enhanced (st->db, num (a[1]), collect_copy, s);
+      return g_string_free (s, FALSE);
     }
   if (strcmp (op, "style") == 0 && n == 3)
     {
@@ -282,6 +300,9 @@ static const ScriptCase scripts[] = {
   { "no copy yet",          "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; enhanced 1 -> null; enhance 9 x m @1 -> false" },
   { "the copy goes with its session", "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; enhance 1 x m @1 -> true;"
                             "delsession 1 -> true; enhanced 1 -> null" },
+  { "a topic's copies, oldest first", "subj A -> 1; topic 1 T -> 1; topic 1 U -> 2; start 1 @300 -> 1; start 1 @100 -> 2;"
+                            "start 1 @200 -> 3; start 2 @50 -> 4; enhance 1 c1 m @1 -> true; enhance 2 c2 m @1 -> true;"
+                            "enhance 4 other m @1 -> true; copies 1 -> 2@100:c2|1@300:c1; copies 2 -> 4@50:other; copies 9 -> " },
   { "settings",             "setting ai_consent -> null; set ai_consent yes -> true; setting ai_consent -> yes;"
                             "set ai_consent no -> true; reopen -> ok; setting ai_consent -> no" },
   { "style samples from other topics, newest first",

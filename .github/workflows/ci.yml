@@ -26,7 +26,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build pkg-config gcc libgtk-4-dev libgtk-4-bin \
-            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev libsoup-3.0-dev libjson-glib-dev mutter dbus dbus-daemon valgrind
+            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev libsoup-3.0-dev libjson-glib-dev librsvg2-dev mutter dbus dbus-daemon valgrind
 
       - name: Build (all warnings are errors)
         shell: bash
@@ -72,7 +72,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build pkg-config gcc libgtk-4-dev libgtk-4-bin \
-            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev libsoup-3.0-dev libjson-glib-dev mutter dbus dbus-daemon
+            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev libsoup-3.0-dev libjson-glib-dev librsvg2-dev mutter dbus dbus-daemon
 
       - name: Build with AddressSanitizer + UndefinedBehaviorSanitizer
         shell: bash
@@ -122,7 +122,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build pkg-config clang libgtk-4-dev \
-            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev libsoup-3.0-dev libjson-glib-dev
+            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev libsoup-3.0-dev libjson-glib-dev librsvg2-dev
 
       - name: Restore what earlier runs found
         uses: actions/cache@v6

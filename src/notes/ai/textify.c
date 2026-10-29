@@ -196,9 +196,9 @@ jn_textify (const char *html, gsize len, gsize limit)
             owe_break (&o, 2);
           continue;
         }
-      gunichar c;
-      gsize m;
-      if (*p == '&' && (m = entity (p, end, &c)) > 0)
+      gunichar c = 0;
+      gsize m = *p == '&' ? entity (p, end, &c) : 0;
+      if (m > 0)
         {
           text_char (&o, c);
           p += m;

@@ -15,7 +15,7 @@ foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'jour
 endforeach
 
 # Notes core. Runs under Valgrind with the Journal's core.
-foreach name : ['noteline', 'notesdb', 'noteexport']
+foreach name : ['noteline', 'notesdb', 'noteexport', 'markdown', 'svgsafe']
   exe = executable('test_' + name, 'test_' + name + '.c', dependencies : notes_core_dep)
   test(name, isolated, args : [exe], env : test_env, suite : 'core')
 endforeach
@@ -68,7 +68,9 @@ notes_ui_test = executable('test_notes_ui', 'test_notes_ui.c', dependencies : no
 test('notes-ui', find_program('run-headless.sh'), args : [notes_ui_test],
      env : test_env, suite : 'ui', timeout : 120)
 
-# The real Notes program, alone and under the real start screen.
+# The real Notes program, alone and under the real start screen. Not
+# beside 'launcher': both start the real start screen on one test bus, and
+# a second one hands over to the first and exits.
 test('notes', find_program('run-headless.sh'),
      args : [files('check-notes.sh'), notes_exe, launcher_exe],
-     suite : 'ui', timeout : 60)
+     suite : 'ui', timeout : 60, is_parallel : false)
