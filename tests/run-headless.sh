@@ -24,8 +24,12 @@ if [ "${JR_IN_HEADLESS_SHELL:-0}" = 1 ]; then
     "$JR_COMPOSITOR" --headless --wayland --no-x11 --virtual-monitor 1280x800 \
     --wayland-display jr-test >"$XDG_RUNTIME_DIR/shell.log" 2>&1 &
   shell=$!
+  # Up to 60 s: on a busy CI runner, with several UI suites starting at
+  # once, the compositor has been seen to need 8 s or more.
   i=0
-  while [ ! -e "$XDG_RUNTIME_DIR/jr-test" ] && [ $i -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+  while [ ! -e "$XDG_RUNTIME_DIR/jr-test" ] && [ $i -lt 600 ] && kill -0 "$shell" 2>/dev/null; do
+    sleep 0.1; i=$((i + 1))
+  done
   if [ ! -e "$XDG_RUNTIME_DIR/jr-test" ]; then
     kill "$shell" 2>/dev/null
     echo "headless $JR_COMPOSITOR did not start:"; tail -5 "$XDG_RUNTIME_DIR/shell.log"
