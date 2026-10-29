@@ -85,6 +85,10 @@ on_activate (GApplication *app)
     }
   g_autofree char *exports = jn_export_dir ();
   JnWindow *win = jn_window_new (GTK_APPLICATION (app), db, exports);
+  /* The AI helper next to Notes ($JOURNAL_AI_HELPER: a build tree). */
+  const char *helper = g_getenv ("JOURNAL_AI_HELPER");
+  JnGeminiConfig ai = { helper != NULL && *helper != '\0' ? helper : JN_HELPER_PATH, NULL, NULL, NULL, NULL, { 0 }, 0 };
+  jn_window_set_enhancer (win, jn_gemini_enhancer_new (&ai));
   if (g_strcmp0 (g_getenv ("JOURNAL_LAUNCHER"), "1") == 0)
     jn_window_set_navigation (win, on_leave, NULL);
   gtk_window_present (GTK_WINDOW (win));

@@ -9,6 +9,7 @@
 
 #include <gtk/gtk.h>
 #include "editor.h"
+#include "client.h"
 #include "notesdb.h"
 
 #define JN_TYPE_WINDOW (jn_window_get_type ())
@@ -34,6 +35,15 @@ void      jn_window_new_session    (JnWindow *win);
 void      jn_window_save           (JnWindow *win);
 /* Writes the open topic as Markdown; returns the file's path. */
 char     *jn_window_export         (JnWindow *win, GError **error);
+
+/* The AI that writes enhanced copies (taken over; NULL: no AI). */
+void      jn_window_set_enhancer   (JnWindow *win, JnEnhancer *enhancer);
+/* Asks for an enhanced copy of the open session: the first time, after
+ * a question about what is sent where. FALSE if it did not start. */
+gboolean  jn_window_enhance        (JnWindow *win);
+/* The enhanced copy on screen, or NULL. */
+char     *jn_window_enhanced_text  (JnWindow *win);
+gboolean  jn_window_is_enhancing   (JnWindow *win);
 
 gint64    jn_window_topic          (JnWindow *win);
 gint64    jn_window_session        (JnWindow *win); /* 0 until the first keystroke */

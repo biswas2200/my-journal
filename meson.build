@@ -88,6 +88,37 @@ notes_core_dep = declare_dependency(
   dependencies : [glib_dep, gio_dep, sqlite_dep],
 )
 
+# The AI side of Notes: pure logic (no network, no UI), tested alone.
+json_dep = dependency('json-glib-1.0', version : '>= 1.6')
+soup_dep = dependency('libsoup-3.0', version : '>= 3.0')
+notes_ai_lib = static_library('notes-ai',
+  'src/notes/ai/textify.c',
+  'src/notes/ai/netguard.c',
+  'src/notes/ai/aiproto.c',
+  dependencies : [glib_dep, gio_dep, json_dep],
+)
+notes_ai_dep = declare_dependency(
+  link_with : notes_ai_lib,
+  include_directories : include_directories('src/notes/ai'),
+  dependencies : [glib_dep, gio_dep, json_dep],
+)
+# Fetching Sources (network): only the AI helper and its tests.
+notes_fetch_lib = static_library('notes-fetch', 'src/notes/ai/fetch.c',
+  dependencies : [notes_ai_dep, soup_dep],
+)
+notes_fetch_dep = declare_dependency(
+  link_with : notes_fetch_lib,
+  dependencies : [notes_ai_dep, soup_dep],
+)
+# Notes asking the helper (token from your sign-in, then journal-ai).
+notes_client_lib = static_library('notes-client', 'src/notes/ai/client.c',
+  dependencies : [notes_ai_dep, soup_dep],
+)
+notes_client_dep = declare_dependency(
+  link_with : notes_client_lib,
+  dependencies : [notes_ai_dep, soup_dep],
+)
+
 # App
 gtk_dep = dependency('gtk4', version : '>= 4.12')
 # The login keyring, which holds the secret a PIN needs (see keyring.h).
@@ -137,16 +168,23 @@ notes_ui_lib = static_library('notes-ui',
   'src/notes/ui/editor.c',
   'src/notes/ui/notes_window.c',
   notes_resources[1],
-  dependencies : [notes_core_dep, gtk_dep, programs_dep],
+  dependencies : [notes_core_dep, notes_client_dep, gtk_dep, programs_dep],
 )
 notes_ui_dep = declare_dependency(
   link_with : notes_ui_lib,
   sources : notes_resources,
   include_directories : include_directories('src/notes/ui'),
-  dependencies : [notes_core_dep, gtk_dep, programs_dep],
+  dependencies : [notes_core_dep, notes_client_dep, gtk_dep, programs_dep],
 )
 notes_exe = executable('journal-notes', 'src/notes/main.c',
   dependencies : notes_ui_dep,
+  c_args : '-DJN_HELPER_PATH="@0@"'.format(program_dir / 'journal-ai'),
+  install : true,
+  install_dir : get_option('libexecdir'),
+)
+# Notes' AI helper: one locked-down run per "Enhance".
+ai_exe = executable('journal-ai', 'src/notes/ai/helper.c',
+  dependencies : [notes_fetch_dep, notes_core_dep],
   install : true,
   install_dir : get_option('libexecdir'),
 )

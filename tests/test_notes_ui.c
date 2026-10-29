@@ -151,6 +151,9 @@ test_typing (void)
     { "Enter on plain text adds a line", "- a⏎⏎⏎b",                       "- a\n\nb" },
     { "Enter after a heading is text", "# Title⏎body",                   "# Title\nbody" },
     { "markers only at line start",  "a - b # c",                        "a - b # c" },
+    { "a heading in an empty item",  "> a⏎## Doubts",                    "→ a\n## Doubts" },
+    { "a bullet in an empty arrow",  "> a⏎- b",                          "→ a\n- b" },
+    { "not inside an item's text",   "- a # b",                          "- a # b" },
     { "three hashes stay text",      "### x",                            "### x" },
     { "the whole note",              "# Prefix sum⏎## Idea⏎- pre[0] = 0⏎⇥build once⏎⏎> each query is O(1)",
                                      "# Prefix sum\n## Idea\n- pre[0] = 0\n  - build once\n→ each query is O(1)" },
@@ -417,6 +420,169 @@ test_window_flow (void)
   g_rmdir (dir);
 }
 
+/* ---- the AI: a stand-in that records what it is sent ------------------ */
+
+typedef struct {
+  JnEnhancer    base;
+  int           calls;
+  char         *note, *subject, *topic, *links, *style;
+  const char   *reply, *error;
+} Fake;
+
+typedef struct {
+  Fake         *f;
+  JnEnhanceDone done;
+  gpointer      user;
+} FakeCall;
+
+static gboolean
+fake_answer (gpointer data)
+{
+  FakeCall *c = data;
+  JnAiSource src[] = { { (char *) "https://cp-algorithms.com/prefix", NULL, NULL },
+                       { (char *) "ftp://old", NULL, (char *) "only http and https links are fetched" } };
+  JnAiAnswer a = { (char *) c->f->reply, (char *) "gemini-3.8-flash", NULL, src, 2 };
+  c->done (c->f->error == NULL ? &a : NULL, c->f->error, c->user);
+  g_free (c);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+fake_start (JnEnhancer *self, const JnAiInput *in, char **links, GCancellable *cancel, JnEnhanceDone done,
+            gpointer user)
+{
+  (void) cancel;
+  Fake *f = (Fake *) self;
+  f->calls++;
+  g_free (f->note);
+  g_free (f->subject);
+  g_free (f->topic);
+  g_free (f->links);
+  g_free (f->style);
+  f->note = g_strdup (in->note);
+  f->subject = g_strdup (in->subject);
+  f->topic = g_strdup (in->topic);
+  f->links = g_strjoinv ("|", links);
+  f->style = g_strjoinv ("|", (char **) in->style);
+  FakeCall *c = g_new0 (FakeCall, 1);
+  c->f = f;
+  c->done = done;
+  c->user = user;
+  g_timeout_add (50, fake_answer, c); /* answers later, like the real one */
+}
+
+static char *
+fake_describe (JnEnhancer *self)
+{
+  (void) self;
+  return g_strdup ("a stand-in AI");
+}
+
+static void
+fake_free (JnEnhancer *self)
+{
+  (void) self; /* the test owns it */
+}
+
+static void
+close_other_windows (GtkWindow *keep)
+{
+  GList *all = gtk_window_list_toplevels ();
+  for (GList *l = all; l != NULL; l = l->next)
+    if (l->data != keep && gtk_widget_get_visible (l->data))
+      gtk_window_destroy (l->data);
+  g_list_free (all);
+}
+
+static void
+test_enhance (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-ai-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  JnDb *db = jn_db_open (path, NULL);
+  /* Another topic's note: a sample of how this person writes. */
+  gint64 s0 = jn_db_add_subject (db, "OS"), t0 = jn_db_add_topic (db, s0, "Paging");
+  gint64 old = jn_db_start_session (db, t0, 100);
+  jn_db_save_session (db, old, "- pages are fixed-size blocks", "", 200);
+  JnWindow *win = jn_window_new (NULL, db, dir);
+  Fake fake = { { fake_start, fake_describe, fake_free }, 0, NULL, NULL, NULL, NULL, NULL, "## Idea\n- more [1]", NULL };
+  jn_window_set_enhancer (win, &fake.base);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (200);
+  JnEditor *e = jn_window_editor (win);
+
+  gint64 dsa = jn_window_add_subject (win, "DSA");
+  g_assert_cmpint (dsa, >, 0);
+  jn_window_add_topic (win, "Prefix sum");
+  g_assert_false (jn_window_enhance (win)); /* nothing written yet */
+  g_assert_cmpint (fake.calls, ==, 0);
+  type (e, "# Prefix sum⏎- pre[0] = 0");
+  gtk_text_buffer_set_text (gtk_text_view_get_buffer (jn_editor_sources_view (e)), "https://cp-algorithms.com/prefix\nftp://old", -1);
+  gint64 session = jn_window_session (win);
+
+  /* The first time, it asks; nothing goes anywhere until you say yes. */
+  g_assert_false (jn_window_enhance (win));
+  pump (200);
+  g_assert_cmpint (fake.calls, ==, 0);
+  close_other_windows (GTK_WINDOW (win)); /* "Cancel" */
+  pump (100);
+  g_assert_cmpint (fake.calls, ==, 0);
+  g_assert_null (jn_db_get_setting (db, "ai_consent"));
+
+  /* Once agreed: the note, its links and a style sample go to the AI. */
+  jn_db_set_setting (db, "ai_consent", "yes");
+  g_assert_true (jn_window_enhance (win));
+  g_assert_true (jn_window_is_enhancing (win));
+  g_assert_false (jn_window_enhance (win)); /* one at a time */
+  g_assert_cmpint (fake.calls, ==, 1);
+  g_assert_cmpstr (fake.note, ==, "# Prefix sum\n- pre[0] = 0");
+  g_assert_cmpstr (fake.subject, ==, "DSA");
+  g_assert_cmpstr (fake.topic, ==, "Prefix sum");
+  g_assert_cmpstr (fake.links, ==, "https://cp-algorithms.com/prefix|ftp://old");
+  g_assert_cmpstr (fake.style, ==, "- pages are fixed-size blocks");
+
+  /* Writing goes on meanwhile; the answer lands next to the note. */
+  type (e, "⏎range sums");
+  pump (300);
+  g_assert_false (jn_window_is_enhancing (win));
+  g_autofree char *shown = jn_window_enhanced_text (win);
+  g_assert_nonnull (shown);
+  g_assert_true (g_str_has_prefix (shown, "# Prefix sum (enhanced)\n\nDSA \xc2\xb7 studied "));
+  g_assert_nonnull (strstr (shown, "1. <https://cp-algorithms.com/prefix>\n2. <ftp://old> (not used: only http"));
+  g_assert_nonnull (strstr (shown, "## Idea\n- more [1]\n"));
+  g_autofree char *model = NULL;
+  g_autofree char *stored = jn_db_get_enhanced (db, session, &model, NULL);
+  g_assert_cmpstr (stored, ==, shown);
+  g_assert_cmpstr (model, ==, "gemini-3.8-flash");
+  /* Your note is untouched by it. */
+  g_autofree char *body = jn_editor_body (e);
+  g_assert_cmpstr (body, ==, "# Prefix sum\n- pre[0] = 0\n- range sums");
+
+  /* Elsewhere and back: the copy comes back with its session. */
+  jn_window_open_session (win, old);
+  g_assert_null (jn_window_enhanced_text (win));
+  jn_window_open_session (win, session);
+  g_autofree char *again = jn_window_enhanced_text (win);
+  g_assert_cmpstr (again, ==, stored);
+
+  /* An error: said plainly, the old copy kept. */
+  fake.error = "Gemini is busy or over its quota; try again in a minute.";
+  g_assert_true (jn_window_enhance (win));
+  pump (300);
+  g_autofree char *kept = jn_db_get_enhanced (db, session, NULL, NULL);
+  g_assert_cmpstr (kept, ==, stored);
+
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+  g_free (fake.note);
+  g_free (fake.subject);
+  g_free (fake.topic);
+  g_free (fake.links);
+  g_free (fake.style);
+  g_remove (path);
+  g_rmdir (dir);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -440,5 +606,6 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/toolbar", test_toolbar);
   g_test_add_func ("/notes-ui/markdown-mode", test_markdown_mode);
   g_test_add_func ("/notes-ui/window-flow", test_window_flow);
+  g_test_add_func ("/notes-ui/enhance", test_enhance);
   return g_test_run ();
 }

@@ -20,6 +20,24 @@ foreach name : ['noteline', 'notesdb', 'noteexport']
   test(name, isolated, args : [exe], env : test_env, suite : 'core')
 endforeach
 
+# Notes' AI side (pure parts).
+foreach name : ['textify', 'netguard', 'aiproto']
+  exe = executable('test_' + name, 'test_' + name + '.c', dependencies : notes_ai_dep)
+  test(name, isolated, args : [exe], env : test_env, suite : 'core')
+endforeach
+
+# Fetching from a local web server (no internet needed).
+exe = executable('test_fetch', 'test_fetch.c', dependencies : notes_fetch_dep)
+test('fetch', isolated, args : [exe], env : test_env, suite : 'core', timeout : 60)
+
+# The real AI helper against a fake Gemini on this machine.
+exe = executable('test_ai_helper', 'test_ai_helper.c', dependencies : [notes_ai_dep, soup_dep])
+test('ai-helper', isolated, args : [exe, ai_exe], env : test_env, suite : 'sandbox', timeout : 60)
+
+# Notes' AI client with fake Google services and the real helper.
+exe = executable('test_ai_client', 'test_ai_client.c', dependencies : notes_client_dep)
+test('ai-client', isolated, args : [exe, ai_exe], env : test_env, suite : 'sandbox', timeout : 60)
+
 # The network jail. Its own suite: Valgrind cannot run seccomp filters.
 exe = executable('test_netjail', 'test_netjail.c', dependencies : core_dep)
 test('netjail', isolated, args : [exe], env : test_env, suite : 'sandbox')

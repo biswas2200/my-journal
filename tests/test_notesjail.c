@@ -17,6 +17,9 @@
  *   home/Documents/Notes/                     exports    read and write
  *   home/elsewhere.txt                        not on the list */
 #include <errno.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -271,6 +274,11 @@ test_access_table (void)
           jr_case (&c, k->name, got == k->allowed, "Input %s  Expected %s  Got %s", k->rel,
                    k->allowed ? "allowed" : "refused", got ? "allowed" : "refused");
         }
+      /* /proc: its own entry yes, another program's (the parent test) no. */
+      g_autofree char *other = g_strdup_printf ("/proc/%d/environ", (int) getppid ());
+      jr_case (&c, "its own /proc entry", try_access (READ, "/proc/self/status"), "Expected readable");
+      jr_case (&c, "another program's environment", !try_access (READ, other), "Expected refused: %s", other);
+      jr_case (&c, "the list of programs", !try_access (LIST, "/proc"), "Expected refused");
       jr_cases_done (&c);
       return;
     }
@@ -334,6 +342,93 @@ test_children (void)
   g_test_trap_assert_passed ();
 }
 
+
+/* ---- the AI helper's lock: nothing on disk, only the allowed ports ---- */
+
+static int
+listener (int *port)
+{
+  int fd = socket (AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (fd < 0)
+    {
+      g_printerr ("cannot create a test listener: %s\n", g_strerror (errno));
+      g_assert_not_reached ();
+    }
+  struct sockaddr_in a = { .sin_family = AF_INET, .sin_addr.s_addr = htonl (INADDR_LOOPBACK) };
+  g_assert_cmpint (bind (fd, (struct sockaddr *) &a, sizeof a), ==, 0);
+  g_assert_cmpint (listen (fd, 4), ==, 0);
+  socklen_t len = sizeof a;
+  g_assert_cmpint (getsockname (fd, (struct sockaddr *) &a, &len), ==, 0);
+  *port = ntohs (a.sin_port);
+  return fd;
+}
+
+static int
+connect_to (int port)
+{
+  int fd = socket (AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (fd < 0)
+    return -errno;
+  struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons ((guint16) port),
+                           .sin_addr.s_addr = htonl (INADDR_LOOPBACK) };
+  int rc = connect (fd, (struct sockaddr *) &a, sizeof a) == 0 ? 0 : -errno;
+  close (fd);
+  return rc;
+}
+
+static void
+test_helper_lock (void)
+{
+  if (g_test_subprocess ())
+    {
+      home = g_strdup (g_getenv ("JR_FAKE_HOME"));
+      int allowed = atoi (g_getenv ("JR_PORT_OK")), other = atoi (g_getenv ("JR_PORT_NO"));
+      guint16 ports[] = { (guint16) allowed };
+      JnJailPaths *p = jn_jail_helper_paths (ports, 1);
+      g_autoptr (GError) error = NULL;
+      if (!jn_jail_enter (p, &error))
+        {
+          g_printerr ("could not enter the helper lock: %s\n", error->message);
+          g_assert_not_reached ();
+        }
+      jn_jail_paths_free (p);
+      JrCases c = { "helper lock", 0, 0 };
+      jr_case (&c, "the allowed port", connect_to (allowed) == 0, "Expected connected  Got %s",
+               g_strerror (-connect_to (allowed)));
+      jr_case (&c, "any other port", connect_to (other) == -EACCES, "Expected EACCES  Got %s",
+               g_strerror (-connect_to (other)));
+      int s = socket (AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+      struct sockaddr_in a = { .sin_family = AF_INET, .sin_addr.s_addr = htonl (INADDR_LOOPBACK) };
+      jr_case (&c, "no listening", bind (s, (struct sockaddr *) &a, sizeof a) != 0, "Expected bind refused");
+      close (s);
+      g_autofree char *journal = at (".local/share/journal/journal.db");
+      g_autofree char *notes = at (".local/share/journal-notes/notes.db");
+      g_autofree char *config = at (".config/gtk-4.0/settings.ini");
+      jr_case (&c, "the journal", !try_access (READ, journal), "Expected refused");
+      jr_case (&c, "the notes", !try_access (READ, notes), "Expected refused (the helper needs no notes on disk)");
+      jr_case (&c, "settings", !try_access (READ, config), "Expected refused");
+      g_autofree char *tmp = g_build_filename (g_get_tmp_dir (), "planted-by-helper", NULL);
+      jr_case (&c, "write anywhere", !try_access (CREATE, tmp), "Expected refused");
+      jr_case (&c, "network settings", try_access (READ, "/etc/resolv.conf") || !g_file_test ("/etc/resolv.conf",
+               G_FILE_TEST_EXISTS), "Expected readable");
+      jr_case (&c, "website certificates", !g_file_test ("/etc/ssl/certs/ca-certificates.crt", G_FILE_TEST_EXISTS) ||
+               try_access (READ, "/etc/ssl/certs/ca-certificates.crt"), "Expected readable");
+      jr_case (&c, "system libraries", try_access (LIST, "/usr/lib"), "Expected readable");
+      jr_cases_done (&c);
+      return;
+    }
+  int ok_port, no_port;
+  int a = listener (&ok_port), b = listener (&no_port);
+  g_autofree char *ok_s = g_strdup_printf ("%d", ok_port), *no_s = g_strdup_printf ("%d", no_port);
+  g_auto (GStrv) env = fake_env ();
+  env = g_environ_setenv (env, "JR_PORT_OK", ok_s, TRUE);
+  env = g_environ_setenv (env, "JR_PORT_NO", no_s, TRUE);
+  g_test_trap_subprocess_with_envp (NULL, (const char *const *) env, 0, G_TEST_SUBPROCESS_DEFAULT);
+  g_test_trap_assert_passed ();
+  close (a);
+  close (b);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -353,6 +448,7 @@ main (int argc, char **argv)
       g_test_add_func ("/notesjail/access", test_access_table);
       g_test_add_func ("/notesjail/tricks", test_tricks);
       g_test_add_func ("/notesjail/children", test_children);
+      g_test_add_func ("/notesjail/helper-lock", test_helper_lock);
       int rc = g_test_run ();
       remove_tree (base);
       g_free (home);
@@ -362,5 +458,6 @@ main (int argc, char **argv)
   g_test_add_func ("/notesjail/access", test_access_table);
   g_test_add_func ("/notesjail/tricks", test_tricks);
   g_test_add_func ("/notesjail/children", test_children);
+  g_test_add_func ("/notesjail/helper-lock", test_helper_lock);
   return g_test_run ();
 }

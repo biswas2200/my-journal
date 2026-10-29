@@ -55,6 +55,14 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Notes file lock: the journal and keyring are on no list and unreachable (open, list, write, `..`, symlink, hard link, rename, `/proc/self/root`, child programs); its own data, settings, cache and exports work; the system is read-only; the journal is untouched afterwards | `sandbox/notesjail` |
 | Notes editor, typed key by key: every format and shortcut, lists, indent, Backspace, Enter before a heading, undo, the cursor never inside a bullet or marker, toolbar on a selection, Markdown mode both ways | `ui/notes-ui` |
 | Notes window: a session starts on the first keystroke and autosaves; switching saves at once; looking creates nothing; empty sessions vanish; export writes `<subject>/<topic>.md`; Home saves and closes; all inside the file lock | `ui/notes-ui` (`/notes-ui/window-flow`) |
+| Page to text: tags, scripts, styles, comments, entities (bad and surrogate ones kept), blocks and lists, `<pre>`, broken or hostile HTML, invalid UTF-8; hidden random tag soup; 5 MB page in linear time | `core/textify` |
+| Links and addresses: only http/https on 80/443, no credentials; every private, loopback, link-local, carrier-NAT, multicast, reserved and documentation range refused, IPv4 and IPv6 and IPv4-inside-IPv6; hidden 20 000 private addresses | `core/netguard` |
+| AI exchange: Google sign-in file (only authorized_user; broken, partial, other kinds), token answers (revoked, server trouble), the request (the person's rules, fenced note and sources that hostile text cannot close, style samples, thinking kept low), Gemini answers (thoughts left out, cut off, blocked, quota, permission), Notes <-> helper messages, the stored copy; no secret in any error | `core/aiproto` |
+| Fetching from a local server: pages, plain text, redirects, 404, PDF, script-only pages, a 5 MB page capped; the host check and the per-connection check each stop a request before it reaches the server | `core/fetch` |
+| The helper's lock: only the allowed port connects, any other is refused, nothing listens; the journal, the notes, settings and every write refused; certificates and network settings readable | `sandbox/notesjail` (`/notesjail/helper-lock`) |
+| The real helper against a fake Gemini: token and project as headers, the note, rules and sources in the request, Markdown back; a port not allowed is unreachable; a broken request or Gemini error gives one sentence and never the token | `sandbox/ai-helper` |
+| Notes' AI client with fake Google services: one token, reused; the refresh token and client secret reach only the token endpoint; revoked, missing sign-in, no project, missing helper each explained | `sandbox/ai-client` |
+| Enhance in the window: nothing to send without a note; nothing sent until you agree; the note, links and a style sample go; writing goes on meanwhile; the copy is saved and shown beside the unchanged note, comes back with its session, and an error keeps the old copy | `ui/notes-ui` (`/notes-ui/enhance`) |
 | Notes opens, runs as the start screen's child, and closes cleanly on logout (the launcher waits for it) | `notes` |
 | Home and Notes on every screen (lock screen too) only when the launcher started the Journal; leaving saves, locks and closes; the next visit starts locked | `/ui/leave` |
 | Reopened entries are exactly as tall as their text, also after the window changes width; "New stamped entry" sits right under them | `/ui/saved-entries-fit` |
@@ -228,3 +236,11 @@ After `sudo meson install -C build` and `sudo tools/install-apparmor.sh`,
 run `tools/check-apparmor.sh`. Expect every probe "refused" (TCP, UDP,
 IPv6, DNS through systemd-resolved, the "open a link" portal) and, with
 the Journal open, `running journal-diary: journal-diary (enforce)`.
+
+### 13. A real enhanced copy
+
+Signed in with `gcloud auth application-default login`, open a topic,
+write a few lines, put a page you studied (e.g. a Wikipedia article) in
+Sources, press **✦ Enhance** and agree. Within a minute the copy appears
+on the right: your points in your order, added facts cited `[1]`, a
+"Gaps" list, and your note on the left exactly as you wrote it.

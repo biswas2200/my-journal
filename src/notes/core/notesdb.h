@@ -51,6 +51,21 @@ void     jn_session_clear       (JnSession *s);
 gboolean jn_db_drop_if_empty    (JnDb *db, gint64 id);
 gboolean jn_db_delete_session   (JnDb *db, gint64 id);
 
+/* The AI's enhanced copy of a session (one per session; enhancing again
+ * replaces it; it goes when the session goes). Never the note itself. */
+gboolean jn_db_set_enhanced     (JnDb *db, gint64 session, const char *markdown, const char *model, gint64 now);
+/* NULL if there is none; *model and *created are filled in when found. */
+char    *jn_db_get_enhanced     (JnDb *db, gint64 session, char **model, gint64 *created);
+
+/* Small settings (e.g. "ai_consent"). */
+gboolean jn_db_set_setting      (JnDb *db, const char *key, const char *value);
+char    *jn_db_get_setting      (JnDb *db, const char *key);
+
+/* Up to `n` recent, non-empty notes from topics other than `topic`,
+ * newest first, each cut to `max_bytes`: to show the AI how this person
+ * writes. NULL-terminated. */
+char   **jn_db_style_samples    (JnDb *db, gint64 topic, int n, gsize max_bytes);
+
 /* Sorted by name ignoring case; sessions newest first. */
 void     jn_db_foreach_subject  (JnDb *db, JnNameFunc fn, gpointer user);
 void     jn_db_foreach_topic    (JnDb *db, gint64 subject, JnNameFunc fn, gpointer user);

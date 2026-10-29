@@ -426,16 +426,29 @@ jn_editor_key (JnEditor *e, guint keyval, GdkModifierType state)
     {
     case GDK_KEY_space:
       {
-        if (selection || kind != JN_TEXT)
+        if (selection)
           return FALSE;
+        /* A marker typed on a plain line, or in an empty item of a list
+         * (Enter continued an arrow, now "## " makes a heading). */
         GtkTextIter a;
-        line_start (e, line, &a);
+        if (kind == JN_TEXT)
+          line_start (e, line, &a);
+        else
+          a = ts;
         g_autofree char *typed = gtk_text_buffer_get_text (e->buf, &a, &c, TRUE);
         g_autofree char *candidate = g_strconcat (typed, " ", NULL);
         gsize n = 0;
         JnKind k = jn_line_shortcut (candidate, &n);
         if (k == JN_TEXT)
           return FALSE;
+        if (kind != JN_TEXT)
+          {
+            /* Only in an item with nothing else in it. */
+            GtkTextIter end;
+            line_end (e, line, &end);
+            if (!gtk_text_iter_equal (&c, &end))
+              return FALSE;
+          }
         gtk_text_buffer_begin_user_action (e->buf);
         gtk_text_buffer_delete (e->buf, &a, &c);
         set_line_kind (e, line, k);

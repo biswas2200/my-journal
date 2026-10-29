@@ -6,8 +6,8 @@ head. Everything stays in one encrypted file on this laptop: no network,
 no accounts, no telemetry, no sync.
 
 The start screen also opens **Notes**, for study notes: a separate
-program that never sees the journal (see [Notes](#notes)). An AI enhanced
-copy of each note comes next.
+program that never sees the journal, with an optional AI "enhanced copy"
+of each note (see [Notes](#notes) and [AI enhanced copy](#ai-enhanced-copy)).
 
 ## What it does (V1)
 
@@ -103,6 +103,43 @@ date, time and sources, to `~/Documents/Notes/<subject>/<topic>.md`.
 
 Notes live in `~/.local/share/journal-notes/notes.db` (0600 in a 0700
 folder). They are study material, so the file is not encrypted.
+
+## AI enhanced copy
+
+**✦ Enhance** (`Ctrl+Shift+E`) writes an enhanced copy of the open
+session with Gemini 3.8 Flash on Vertex AI, using your Google sign-in
+(`gcloud auth application-default login`; the project is the sign-in's
+quota project, or `$GOOGLE_CLOUD_PROJECT`). The copy appears read-only
+next to your note and is kept with its session; **your note is never
+changed**. It keeps your headings, order and points, fills in only from
+the pages in Sources (each added fact cited as `[n]`, gaps marked "(not
+in the sources)"), writes in your plain style (a few of your other notes
+go along as samples; filler words, emojis and hype are ruled out), may
+add one diagram, and ends with **Gaps**: what the sources cover that
+your note does not yet.
+
+The first time, Notes asks before anything is sent and says exactly
+what goes where. How it stays contained:
+
+- **The journal is never involved**: it has no network (two locks, see
+  below) and Notes cannot read its files.
+- **Notes keeps your sign-in.** It trades it for a one-hour access token
+  at Google; the refresh token and client secret never leave Notes, and
+  the token lives only in memory.
+- **A separate helper does the network work** (`libexec/journal-ai`),
+  one run per Enhance, started with an empty environment. Before any
+  network use it locks itself (Landlock): no file of yours can be read or
+  written (only system code, website certificates and network settings),
+  TCP may reach only ports 443 and 80, nothing may listen. It refuses to
+  run without the lock, and it is not dumpable.
+- **Sources are fetched carefully**: http and https only, normal ports,
+  no `user:password@`; a link or a redirect that leads into this computer
+  or its network (localhost, home addresses, link-local cloud metadata,
+  IPv4 inside IPv6...) is refused before a byte is sent; at most 8 links,
+  3 MB and 20 s each; HTML and plain text only (PDF not yet).
+- **Pages cannot steer it**: their text is fenced as reference material,
+  the AI is told never to follow instructions in it, and whatever comes
+  back is only shown as text, never run.
 
 ## Security model (Option B: encrypt at rest)
 
@@ -281,7 +318,7 @@ persisted across restarts). The manual checklist is in
 
 | Check | Result (28 Oct 2026) | How |
 | --- | --- | --- |
-| Unit, UI and integration tests | 26 suites, all pass | `meson test -C build` |
+| Unit, UI and integration tests | 32 suites, all pass | `meson test -C build` |
 | Network jail: every non-local socket family, random and 64-bit domains, a real TCP listener that must receive nothing, io_uring, x32, threads, child programs | all refused | `tests/test_netjail.c` |
 | AppArmor profile, probed from outside without the jail | TCP, UDP, IPv6, DNS via resolved and the link portal refused | `tools/check-apparmor.sh` |
 | Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |
@@ -343,10 +380,14 @@ C/C++ support, or SonarQube for IDE in VS Code with
 ```
 src/launcher/ `journal`: the start screen; runs one program at a time
 src/diary/    `journal-diary`: the Journal's main(), in the network jail
-src/notes/    `journal-notes`: Notes (study notes; AI comes next)
+src/notes/    `journal-notes`: Notes (study notes, AI enhanced copy)
   core/       plain C, no UI, nothing of the Journal: noteline (the six
               line kinds), notesdb (SQLite), notesjail (Landlock),
               noteexport (Markdown export)
+  ai/         textify (page to text), netguard (which links and
+              addresses), aiproto (sign-in, Gemini request and answer,
+              Notes <-> helper messages), fetch (Sources), client (Notes'
+              side), helper.c (`journal-ai`, the locked-down helper)
   ui/         editor (formats, Markdown mode), notes_window
 src/core/   plain C, no UI, fully unit tested
   jdate       local days, parsing, formatting

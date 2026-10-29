@@ -17,6 +17,12 @@
  *   topics SUBJ          -> a,b
  *   sessions TOPIC       -> id@start-end,...  newest first
  *   topicinfo TOPIC      -> subject:subject name:topic name | null
+ *   enhance ID MD MODEL @T -> true|false  store the AI's enhanced copy
+ *   enhanced ID          -> model@T:markdown | null
+ *   set KEY VALUE        -> true         setting KEY -> value | null
+ *   style TOPIC N        -> body|body    up to N recent notes from other
+ *                                        topics, newest first, to show the
+ *                                        AI how this person writes
  *   reopen               -> ok          close and open the file again
  *
  * Ids count from 1 in each table and are never reused. */
@@ -128,6 +134,27 @@ run_op (Store *st, char **a, int n)
       if (!jn_db_get_topic (st->db, num (a[1]), &subject, &sn, &tn))
         return g_strdup ("null");
       return g_strdup_printf ("%" G_GINT64_FORMAT ":%s:%s", subject, sn, tn);
+    }
+  if (strcmp (op, "enhance") == 0 && n == 5)
+    return yes (jn_db_set_enhanced (st->db, num (a[1]), a[2], a[3], num (a[4])));
+  if (strcmp (op, "enhanced") == 0 && n == 2)
+    {
+      g_autofree char *model = NULL;
+      gint64 at = 0;
+      g_autofree char *md = jn_db_get_enhanced (st->db, num (a[1]), &model, &at);
+      return md == NULL ? g_strdup ("null") : g_strdup_printf ("%s@%" G_GINT64_FORMAT ":%s", model, at, md);
+    }
+  if (strcmp (op, "set") == 0 && n == 3)
+    return yes (jn_db_set_setting (st->db, a[1], a[2]));
+  if (strcmp (op, "setting") == 0 && n == 2)
+    {
+      char *v = jn_db_get_setting (st->db, a[1]);
+      return v != NULL ? v : g_strdup ("null");
+    }
+  if (strcmp (op, "style") == 0 && n == 3)
+    {
+      g_auto (GStrv) bodies = jn_db_style_samples (st->db, num (a[1]), (int) num (a[2]), 4000);
+      return g_strjoinv ("|", bodies);
     }
   if (strcmp (op, "reopen") == 0 && n == 1)
     {
@@ -248,6 +275,19 @@ static const ScriptCase scripts[] = {
                             "subjects -> DSA; topics 1 -> Prefix sum; get 1 -> 1000:1200:## Idea\n  - inner:https://a\nhttps://b" },
   { "topic names",          "subj DSA -> 1; topic 1 'Prefix sum' -> 1; topicinfo 1 -> 1:DSA:Prefix sum; topicinfo 9 -> null;"
                             "rensubj 1 Algorithms -> true; topicinfo 1 -> 1:Algorithms:Prefix sum" },
+  { "an enhanced copy",     "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; enhance 1 '## Idea' gemini-3.8-flash @50 -> true;"
+                            "enhanced 1 -> gemini-3.8-flash@50:## Idea; reopen -> ok; enhanced 1 -> gemini-3.8-flash@50:## Idea" },
+  { "enhancing again replaces it", "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; enhance 1 old m @2 -> true;"
+                            "enhance 1 new m @3 -> true; enhanced 1 -> m@3:new" },
+  { "no copy yet",          "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; enhanced 1 -> null; enhance 9 x m @1 -> false" },
+  { "the copy goes with its session", "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; enhance 1 x m @1 -> true;"
+                            "delsession 1 -> true; enhanced 1 -> null" },
+  { "settings",             "setting ai_consent -> null; set ai_consent yes -> true; setting ai_consent -> yes;"
+                            "set ai_consent no -> true; reopen -> ok; setting ai_consent -> no" },
+  { "style samples from other topics, newest first",
+                            "subj A -> 1; topic 1 T -> 1; topic 1 U -> 2; start 1 @10 -> 1; start 2 @20 -> 2;"
+                            "start 2 @30 -> 3; start 2 @40 -> 4; save 2 '- two' '' @21 -> true; save 3 '- three' '' @31 -> true;"
+                            "save 1 '- own topic' '' @11 -> true; style 1 5 -> - three|- two; style 1 1 -> - three; style 2 5 -> - own topic" },
   { "quotes and unicode",   "subj \"it's\" -> 1; subj 'टिप्पणी' -> 2; subjects -> it's,टिप्पणी" },
   { "case folding beyond ASCII", "subj 'Ärzte' -> 1; subj 'ärzte' -> 0; subj 'ÉCOLE' -> 2; subj 'école' -> 0" },
 };

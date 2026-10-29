@@ -37,6 +37,14 @@ static const char SCHEMA[] =
   "  body TEXT NOT NULL DEFAULT '',"
   "  sources TEXT NOT NULL DEFAULT '');"
   "CREATE INDEX IF NOT EXISTS sessions_by_topic ON sessions (topic, started);"
+  "CREATE TABLE IF NOT EXISTS enhanced ("
+  "  session INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,"
+  "  markdown TEXT NOT NULL,"
+  "  model TEXT NOT NULL,"
+  "  created INTEGER NOT NULL);"
+  "CREATE TABLE IF NOT EXISTS settings ("
+  "  key TEXT PRIMARY KEY,"
+  "  value TEXT NOT NULL);"
   "PRAGMA user_version = 1;";
 
 static const char PRAGMAS[] =
@@ -346,6 +354,83 @@ gboolean
 jn_db_delete_session (JnDb *db, gint64 id)
 {
   return delete_in (db, "DELETE FROM sessions WHERE id = ?", id);
+}
+
+/* ---- enhanced copies, settings, style ------------------------------------ */
+
+gboolean
+jn_db_set_enhanced (JnDb *db, gint64 session, const char *markdown, const char *model, gint64 now)
+{
+  sqlite3_stmt *s = prepare (db, "INSERT INTO enhanced (session, markdown, model, created) VALUES (?, ?, ?, ?)"
+                                 " ON CONFLICT (session) DO UPDATE SET markdown = excluded.markdown,"
+                                 " model = excluded.model, created = excluded.created");
+  bind_int (s, 1, session);
+  bind_text (s, 2, markdown);
+  bind_text (s, 3, model);
+  bind_int (s, 4, now);
+  return done (db, s); /* a missing session breaks the parent rule: FALSE */
+}
+
+char *
+jn_db_get_enhanced (JnDb *db, gint64 session, char **model, gint64 *created)
+{
+  sqlite3_stmt *s = prepare (db, "SELECT markdown, model, created FROM enhanced WHERE session = ?");
+  bind_int (s, 1, session);
+  char *md = NULL;
+  if (s != NULL && sqlite3_step (s) == SQLITE_ROW)
+    {
+      md = g_strdup ((const char *) sqlite3_column_text (s, 0));
+      if (model != NULL)
+        *model = g_strdup ((const char *) sqlite3_column_text (s, 1));
+      if (created != NULL)
+        *created = sqlite3_column_int64 (s, 2);
+    }
+  sqlite3_finalize (s);
+  return md;
+}
+
+gboolean
+jn_db_set_setting (JnDb *db, const char *key, const char *value)
+{
+  sqlite3_stmt *s = prepare (db, "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
+  bind_text (s, 1, key);
+  bind_text (s, 2, value);
+  return done (db, s);
+}
+
+char *
+jn_db_get_setting (JnDb *db, const char *key)
+{
+  sqlite3_stmt *s = prepare (db, "SELECT value FROM settings WHERE key = ?");
+  bind_text (s, 1, key);
+  char *v = s != NULL && sqlite3_step (s) == SQLITE_ROW ? g_strdup ((const char *) sqlite3_column_text (s, 0)) : NULL;
+  sqlite3_finalize (s);
+  return v;
+}
+
+char **
+jn_db_style_samples (JnDb *db, gint64 topic, int n, gsize max_bytes)
+{
+  GPtrArray *out = g_ptr_array_new ();
+  sqlite3_stmt *s = prepare (db, "SELECT body FROM sessions WHERE topic != ? AND trim(body, ' ' || char(9, 10, 13)) != ''"
+                                 " ORDER BY ended DESC, id DESC LIMIT ?");
+  bind_int (s, 1, topic);
+  bind_int (s, 2, MAX (n, 0));
+  while (s != NULL && sqlite3_step (s) == SQLITE_ROW)
+    {
+      const char *body = (const char *) sqlite3_column_text (s, 0);
+      gsize len = strlen (body);
+      if (len > max_bytes)
+        {
+          len = max_bytes;
+          while (len > 0 && ((guchar) body[len] & 0xC0) == 0x80)
+            len--; /* on a character boundary */
+        }
+      g_ptr_array_add (out, g_strndup (body, len));
+    }
+  sqlite3_finalize (s);
+  g_ptr_array_add (out, NULL);
+  return (char **) g_ptr_array_free (out, FALSE);
 }
 
 /* ---- lists -------------------------------------------------------------- */
