@@ -42,31 +42,59 @@ serve (SoupServer *server, SoupServerMessage *msg, const char *path, GHashTable 
 }
 
 static char *base;
+static GMainContext *server_ctx;
+static GMainLoop *server_loop;
+static GThread *server;
 
+/* The server runs on its own thread and main context, and is shut down
+ * and freed at the end, so leak checkers see a clean exit. */
 static gpointer
 server_thread (gpointer data)
 {
-  GMainContext *ctx = data;
-  g_main_context_push_thread_default (ctx);
-  SoupServer *server = soup_server_new (NULL, NULL);
-  soup_server_add_handler (server, NULL, serve, NULL, NULL);
-  GError *error = NULL;
-  g_assert_true (soup_server_listen_local (server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY, &error));
-  GSList *uris = soup_server_get_uris (server);
-  base = g_uri_to_string (uris->data);
+  (void) data;
+  g_main_context_push_thread_default (server_ctx);
+  SoupServer *srv = soup_server_new (NULL, NULL);
+  soup_server_add_handler (srv, NULL, serve, NULL, NULL);
+  g_assert_true (soup_server_listen_local (srv, 0, SOUP_SERVER_LISTEN_IPV4_ONLY, NULL));
+  GSList *uris = soup_server_get_uris (srv);
+  char *b = g_uri_to_string (uris->data);
   g_slist_free_full (uris, (GDestroyNotify) g_uri_unref);
-  GMainLoop *loop = g_main_loop_new (ctx, FALSE);
-  g_main_loop_run (loop);
+  g_atomic_pointer_set (&base, b);
+  g_main_loop_run (server_loop);
+  soup_server_disconnect (srv);
+  g_object_unref (srv);
+  while (g_main_context_iteration (server_ctx, FALSE))
+    ;
+  g_main_context_pop_thread_default (server_ctx);
   return NULL;
 }
 
 static void
 start_server (void)
 {
-  GMainContext *ctx = g_main_context_new ();
-  g_thread_new ("server", server_thread, ctx);
+  server_ctx = g_main_context_new ();
+  server_loop = g_main_loop_new (server_ctx, FALSE);
+  server = g_thread_new ("server", server_thread, NULL);
   while (g_atomic_pointer_get (&base) == NULL)
     g_usleep (1000);
+}
+
+static gboolean
+quit_server (gpointer data)
+{
+  (void) data;
+  g_main_loop_quit (server_loop);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+stop_server (void)
+{
+  g_main_context_invoke (server_ctx, quit_server, NULL);
+  g_thread_join (server);
+  g_main_loop_unref (server_loop);
+  g_main_context_unref (server_ctx);
+  g_free (base);
 }
 
 static char *
@@ -172,5 +200,7 @@ main (int argc, char **argv)
   start_server ();
   g_test_add_func ("/fetch/pages", test_fetch);
   g_test_add_func ("/fetch/sources", test_sources);
-  return g_test_run ();
+  int rc = g_test_run ();
+  stop_server ();
+  return rc;
 }

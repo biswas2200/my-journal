@@ -94,7 +94,10 @@ test_huge (void)
     g_string_append (s, "<div><p>prefix sums turn é range sums into one subtraction</p><script>x()</script></div>");
   gint64 t0 = g_get_monotonic_time ();
   g_autofree char *got = jn_textify (s->str, s->len, 60000);
-  g_assert_cmpint (g_get_monotonic_time () - t0, <, 2 * G_USEC_PER_SEC);
+  /* Linear time: a few hundred ms here; 10 s leaves room for slow
+   * coverage and Valgrind runs and still catches a quadratic slip,
+   * which would take minutes. */
+  g_assert_cmpint (g_get_monotonic_time () - t0, <, 10 * G_USEC_PER_SEC);
   g_assert_cmpuint (strlen (got), <=, 60000);
   g_assert_true (g_utf8_validate (got, -1, NULL));
   g_assert_true (g_str_has_prefix (got, "prefix sums turn é range"));

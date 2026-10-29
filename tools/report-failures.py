@@ -25,7 +25,13 @@ for path in sorted(root.glob("build*/meson-logs/testlog.json")):
         if t.get("result") in ("OK", "SKIP", "EXPECTEDFAIL"):
             continue
         out = (t.get("stdout") or "") + (t.get("stderr") or "")
-        tail = [l for l in out.splitlines() if l.strip()][-6:]
+        lines_out = [l for l in out.splitlines() if l.strip()]
+        tail = lines_out[-6:]
+        # Valgrind: the first error block tells what and where, the tail does not.
+        for i, l in enumerate(lines_out):
+            if "definitely lost" in l or "Invalid read" in l or "Invalid write" in l or "uninitialised" in l:
+                tail = lines_out[i:i + 14]
+                break
         msg = f"{t.get('name')} ({t.get('result')}, exit {t.get('returncode')}): " + " | ".join(tail)
         print("::error::" + msg.replace("%", "%25").replace("\r", "").replace("\n", " ")[:900])
         shown += 1
