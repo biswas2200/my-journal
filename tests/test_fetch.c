@@ -1,5 +1,7 @@
 /* Tests for fetching Sources (src/notes/ai/fetch.c) from a local web
- * server, LeetCode style (see cases.h).
+ * server, LeetCode style (see cases.h). Sessions have no proxy resolver,
+ * as in the helper (on some systems the default one runs a JavaScript
+ * engine for proxy scripts).
  *
  * The server is on this machine, so it is a "private" address: the
  * cases that should read a page switch both guards off; the guard cases
@@ -125,7 +127,7 @@ static const FetchCase cases[] = {
 static void
 test_fetch (void)
 {
-  SoupSession *session = soup_session_new_with_options ("timeout", JN_FETCH_TIMEOUT, NULL);
+  SoupSession *session = soup_session_new_with_options ("timeout", JN_FETCH_TIMEOUT, "proxy-resolver", NULL, NULL);
   JrCases c = { "fetch", 0, 0 };
   for (gsize i = 0; i < G_N_ELEMENTS (cases); i++)
     {
@@ -136,7 +138,7 @@ test_fetch (void)
       /* A guard case gets a fresh session: a kept-alive connection made
        * earlier without the guard would be reused, not checked. */
       SoupSession *own = k->check_host || k->check_connection
-                           ? soup_session_new_with_options ("timeout", JN_FETCH_TIMEOUT, NULL) : g_object_ref (session);
+                           ? soup_session_new_with_options ("timeout", JN_FETCH_TIMEOUT, "proxy-resolver", NULL, NULL) : g_object_ref (session);
       jn_fetch_url (own, u, k->check_host, k->check_connection, &s);
       g_object_unref (own);
       gboolean ok = k->text != NULL ? g_strcmp0 (s.text, k->text) == 0 && s.problem == NULL
@@ -166,7 +168,7 @@ test_fetch (void)
 static void
 test_sources (void)
 {
-  SoupSession *session = soup_session_new_with_options ("timeout", JN_FETCH_TIMEOUT, NULL);
+  SoupSession *session = soup_session_new_with_options ("timeout", JN_FETCH_TIMEOUT, "proxy-resolver", NULL, NULL);
   g_autofree char *local = url ("/page.html");
   char *links[] = { (char *) "", (char *) "  ", (char *) "file:///etc/passwd", (char *) "https://me:pw@example.com/",
                     (char *) "ftp://example.com/", local, NULL };

@@ -29,8 +29,9 @@ for path in sorted(root.glob("build*/meson-logs/testlog.json")):
         tail = lines_out[-6:]
         # Valgrind: the first error block tells what and where, the tail does not.
         for i, l in enumerate(lines_out):
-            if "definitely lost" in l or "Invalid read" in l or "Invalid write" in l or "uninitialised" in l:
-                tail = lines_out[i:i + 14]
+            body = l.split("== ", 1)[1].strip() if l.startswith("==") and "== " in l else ""
+            if body and not body.startswith(("at 0x", "by 0x", "Address ", "in ")) and "possibly lost" not in body:
+                tail = lines_out[i:i + 14]  # the first error's header and where it happened
                 break
         msg = f"{t.get('name')} ({t.get('result')}, exit {t.get('returncode')}): " + " | ".join(tail)
         print("::error::" + msg.replace("%", "%25").replace("\r", "").replace("\n", " ")[:900])
