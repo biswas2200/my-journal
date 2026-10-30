@@ -382,7 +382,7 @@ what only you can check is in [REPORT.md](REPORT.md).
 | Valgrind memcheck | 0 errors, 0 leaks | see Tests |
 | Line coverage | 89.2% overall (Journal, Notes and the start screen) | `tools/coverage.sh` |
 | Compiler warnings | `-Wall -Wextra -Werror`, none | every build |
-| Fuzzing (libFuzzer + ASan + UBSan on GitHub, 10 targets: 5 Journal, 5 Notes) | 8 bugs found and fixed: a damaged file could hand the calendar a missing day; in Notes, a one-byte over-read of every fetched page, a second `url()` or a second root in an AI diagram not checked, broken UTF-8 read past its end, broken JSON that could abort Notes, older json-glib leaking or passing broken text on odd JSON, and a long line of unclosed Markdown marks taking seconds | [`fuzz/README.md`](fuzz/README.md) |
+| Fuzzing (libFuzzer + ASan + UBSan on GitHub, 10 targets: 5 Journal, 5 Notes) | 9 bugs found and fixed: a damaged file could hand the calendar a missing day; in Notes, a one-byte over-read of every fetched page, a second `url()` or a second root in an AI diagram not checked, broken UTF-8 read past its end, broken JSON that could abort Notes, older json-glib leaking or passing broken text on odd JSON, an error that could repeat a sign-in secret, and a long line of unclosed Markdown marks taking seconds | [`fuzz/README.md`](fuzz/README.md) |
 
 What a crash can and cannot lose: entries are saved about a second
 after you stop typing, and on blur, lock and quit. SQLite runs with

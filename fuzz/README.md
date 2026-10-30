@@ -107,6 +107,11 @@ unit tests):
   within a day (`crash-json-glib18-leak-broken-escape.json`,
   `crash-token-lifetime-overflow.json`). Reproduced and checked in an
   Ubuntu 24.04 container.
+- `aiproto`, on GitHub with the inputs cached from earlier runs: the
+  "not supported" message for an unknown sign-in kind repeated the
+  file's `type`, so a file whose `type` held the refresh token showed
+  it. Nothing from the file is repeated now
+  (`crash-adc-type-repeated-secret.json`).
 - `markdown`, small: math of only braces (`$}}$`) came out as an empty
   span (`crash-empty-math-span.md`).
 

@@ -178,8 +178,10 @@ jn_adc_parse (const char *json, gssize len, JnAdc *out, GError **error)
     g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "A service account key is not supported yet. "
                  SIGN_IN_AGAIN);
   else if (strcmp (type, "authorized_user") != 0)
-    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "This kind of Google sign-in (%s) is not supported. "
-                 SIGN_IN_AGAIN, type);
+    /* Nothing from the file is repeated: it holds secrets (fuzzing set
+     * "type" to the refresh token). */
+    g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "This kind of Google sign-in is not supported. "
+                 SIGN_IN_AGAIN);
   else if (str (o, "client_id") == NULL || str (o, "client_secret") == NULL || str (o, "refresh_token") == NULL)
     g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Your Google sign-in is incomplete. " SIGN_IN_AGAIN);
   else

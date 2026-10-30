@@ -48,6 +48,8 @@ test_adc (void)
     { "service account (not supported yet)", "{\"type\":\"service_account\",\"private_key\":\"-----BEGIN\"}",
       "service account" },
     { "external account",       "{\"type\":\"external_account\"}", "not supported" },
+    { "the file is never repeated (fuzzing)", "{\"type\":\"x " REFRESH "\",\"refresh_token\":\"" REFRESH "\"}",
+                                "not supported" },
     { "no refresh token",       "{\"type\":\"authorized_user\",\"client_id\":\"a\",\"client_secret\":\"b\"}",
       "Sign in again" },
     { "not JSON",               "this is not json", "could not be read" },

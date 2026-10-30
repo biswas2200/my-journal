@@ -238,12 +238,12 @@ push (GPtrArray *out, JnMdSpanKind kind, const char *text, gssize len, const cha
   g_ptr_array_add (out, s);
 }
 
+/* Is the character just before p (in the text from start) a letter or
+ * digit? p - 1 is never formed at the start: it would point outside. */
 static gboolean
-word_char (const char *start, const char *p)
+word_before (const char *start, const char *p)
 {
-  if (p < start || *p == '\0')
-    return FALSE;
-  return g_ascii_isalnum (*p);
+  return p > start && g_ascii_isalnum (p[-1]);
 }
 
 /* A [1] or [1, 2] citation at p: its length, else 0. */
@@ -378,10 +378,10 @@ jn_md_spans (const char *text)
             }
         }
       if ((p[0] == '*' || p[0] == '_') && p[1] != '\0' && p[1] != ' ' && p[1] != p[0] &&
-          !(p[0] == '_' && word_char (s, p - 1)))
+          !(p[0] == '_' && word_before (s, p)))
         {
           const char *end = strchr (p + 1, p[0]);
-          while (end != NULL && (end[-1] == ' ' || (p[0] == '_' && word_char (s, end + 1))))
+          while (end != NULL && (end[-1] == ' ' || (p[0] == '_' && g_ascii_isalnum (end[1]))))
             end = strchr (end + 1, p[0]);
           if (end != NULL && end > p + 1)
             {
@@ -393,7 +393,7 @@ jn_md_spans (const char *text)
       if (*p == '[')
         {
           /* pre[0] or f(x)[1] is code, not a citation. */
-          gboolean attached = word_char (s, p - 1) || (p > s && (p[-1] == '_' || p[-1] == ')'));
+          gboolean attached = word_before (s, p) || (p > s && (p[-1] == '_' || p[-1] == ')'));
           gsize n = attached ? 0 : citation (p);
           if (n > 0)
             {
