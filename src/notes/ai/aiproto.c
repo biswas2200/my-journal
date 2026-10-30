@@ -73,8 +73,12 @@ one_object (const char *json, gsize len)
         in_string = TRUE;
       else if (c == '{' || c == '[')
         depth++;
-      else if ((c == '}' || c == ']') && --depth == 0)
-        break;
+      else if (c == '}' || c == ']')
+        {
+          depth--;
+          if (depth == 0)
+            break;
+        }
     }
   for (i++; i < len; i++)
     if (!g_ascii_isspace (json[i]))

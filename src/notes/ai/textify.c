@@ -144,13 +144,14 @@ jn_textify (const char *html, gsize len, gsize limit)
 {
   /* Zero bytes become spaces first, then invalid UTF-8 becomes U+FFFD:
    * from here on the text is one valid, zero-terminated string. */
-  g_autofree char *flat = g_malloc (len + 1); /* `html` need not end in a zero */
+  char *flat = g_malloc (len + 1); /* `html` need not end in a zero */
   memcpy (flat, html, len);
   flat[len] = '\0';
   for (gsize i = 0; i < len; i++)
     if (flat[i] == '\0')
       flat[i] = ' ';
   g_autofree char *valid = g_utf8_make_valid (flat, (gssize) len);
+  g_free (flat);
   gsize vlen = strlen (valid);
   Out o = { g_string_sized_new (MIN (vlen, limit) + 16), 0, FALSE, FALSE, 0 };
   const char *p = valid, *end = valid + vlen;
