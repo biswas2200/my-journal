@@ -83,8 +83,8 @@ Each one now has its input in `fuzz/corpus/` and a named unit-test
 case. The test fails on the old code and passes on the new one.
 Earlier (Journal): a damaged file could hand the calendar a missing day.
 
-The last three rows only showed up on GitHub, which runs an older
-Ubuntu than this laptop. They were reproduced and checked in an Ubuntu
+The older-json-glib row and the sign-in row only showed up on GitHub,
+which runs an older Ubuntu than this laptop. They were reproduced and checked in an Ubuntu
 24.04 container. On the way, CI's older GCC analyzer and Sonar also
 flagged three small code issues, all fixed. None of them could hurt
 you.
