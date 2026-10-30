@@ -1,6 +1,6 @@
 # Journal and Notes: test and safety report
 
-30 October 2026, commit SHA_HERE. What protects your writing, how it was
+30 October 2026, tested at commit 3f12384. What protects your writing, how it was
 tested, what testing found, and what only you can check.
 
 ## What protects what
@@ -48,8 +48,8 @@ strong login password cover that.
 | Valgrind (core, fuzz replays) | 0 errors, 0 leaks |
 | GCC static analyzer | 0 findings |
 | Fuzzing, 10 targets (5 Journal, 5 Notes), libFuzzer + ASan + UBSan | 9 bugs found, all fixed; every input kept and replayed on each test run |
-| SonarQube Cloud quality gate | SONAR_HERE |
-| GitHub CI (build, tests, sanitizers, 10 fuzz jobs) | CI_HERE |
+| SonarQube Cloud quality gate | passed: 0 open issues, 91.8% coverage on new code, A ratings for reliability, security and maintainability |
+| GitHub CI (build, tests, sanitizers, 10 fuzz jobs) | all 12 jobs pass |
 | Crash safety: writer killed at random 50 times per run | every saved entry survives |
 | Network jail and AppArmor, probed from outside | everything refused |
 
@@ -77,10 +77,17 @@ found and fixed:
 | Markdown reader | A long line of unclosed marks took seconds to read | Notes froze for a few seconds |
 | Messages, on the older json-glib that Ubuntu 24.04 ships | Leaked memory on odd JSON, passed broken text on, read a huge token lifetime as -1 | Small leaks; garbled text; a clock sum that could overflow |
 | Sign-in file | The "not supported" error repeated the file's `type`, which could hold a secret | Only with a strange file; but no error may show a secret |
+| Markdown reader | Math made only of braces (`$}}$`) came out as an empty piece | No; it just broke a rule |
 
 Each one now has its input in `fuzz/corpus/` and a named unit-test
 case. The test fails on the old code and passes on the new one.
 Earlier (Journal): a damaged file could hand the calendar a missing day.
+
+The last three rows only showed up on GitHub, which runs an older
+Ubuntu than this laptop. They were reproduced and checked in an Ubuntu
+24.04 container. On the way, CI's older GCC analyzer and Sonar also
+flagged three small code issues, all fixed. None of them could hurt
+you.
 
 ## What only you can check
 
