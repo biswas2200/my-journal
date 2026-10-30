@@ -62,7 +62,7 @@ token (const char *json, gssize len, int status)
   check_error (error, t == NULL);
   check_text (t);
   if (t != NULL)
-    FUZZ_CHECK (status == 200 && expires != -1);
+    FUZZ_CHECK (status == 200 && expires >= 0 && expires <= JN_TOKEN_MAX_SECONDS);
   g_clear_error (&error);
 }
 

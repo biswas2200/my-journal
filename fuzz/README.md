@@ -97,6 +97,16 @@ unit tests):
   for its end to the end of the line; a paragraph over 16 KB is now
   shown unformatted, which takes milliseconds
   (`tests/test_markdown.c`, `/markdown/long-lines`).
+- `aiproto`, on GitHub's Ubuntu 24.04 (json-glib 1.8, older than this
+  laptop's 1.10): 1.8 reads on after the first JSON value and leaks it
+  (`{}{…}`), leaks on a broken `\u` escape, passes a lone surrogate
+  (`\ud800`) on as broken UTF-8, and reads a number too big for 64
+  bits as -1. Notes now checks a message before json-glib sees it
+  (one object, proper escapes, surrogates in pairs), treats a string
+  that is not valid text as missing, and keeps a token's lifetime
+  within a day (`crash-json-glib18-leak-broken-escape.json`,
+  `crash-token-lifetime-overflow.json`). Reproduced and checked in an
+  Ubuntu 24.04 container.
 - `markdown`, small: math of only braces (`$}}$`) came out as an empty
   span (`crash-empty-math-span.md`).
 

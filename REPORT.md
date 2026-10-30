@@ -47,7 +47,7 @@ strong login password cover that.
 | AddressSanitizer + UBSan (core, sandbox, UI) | clean |
 | Valgrind (core, fuzz replays) | 0 errors, 0 leaks |
 | GCC static analyzer | 0 findings |
-| Fuzzing, 10 targets (5 Journal, 5 Notes), libFuzzer + ASan + UBSan | 7 bugs found, all fixed; every input kept and replayed on each test run |
+| Fuzzing, 10 targets (5 Journal, 5 Notes), libFuzzer + ASan + UBSan | 8 bugs found, all fixed; every input kept and replayed on each test run |
 | SonarQube Cloud quality gate | SONAR_HERE |
 | GitHub CI (build, tests, sanitizers, 10 fuzz jobs) | CI_HERE |
 | Crash safety: writer killed at random 50 times per run | every saved entry survives |
@@ -75,6 +75,7 @@ found and fixed:
 | Markdown reader | A line ending in a broken character was read past its end | A crash showing a damaged copy |
 | Messages | json-glib aborts the whole program on some broken JSON (`null{...}`) | A bad answer could close Notes |
 | Markdown reader | A long line of unclosed marks took seconds to read | Notes froze for a few seconds |
+| Messages, on the older json-glib that Ubuntu 24.04 ships | Leaked memory on odd JSON, passed broken text on, read a huge token lifetime as -1 | Small leaks; garbled text; a clock sum that could overflow |
 
 Each one now has its input in `fuzz/corpus/` and a named unit-test
 case. The test fails on the old code and passes on the new one.

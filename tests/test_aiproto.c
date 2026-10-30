@@ -102,6 +102,18 @@ test_token (void)
                               no_secret (error->message);
       jr_case (&c, t[i].name, ok, "Got %s", error ? error->message : (token ? "a token" : "nothing"));
     }
+  /* A wild lifetime is kept within a day, never below 0 (fuzzing). */
+  static const struct { const char *expires; gint64 want; } life[] = {
+    { "-5", 0 }, { "0", 0 }, { "86400", 86400 }, { "9000000000000000000", 86400 }, { "\"soon\"", 0 },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (life); i++)
+    {
+      g_autofree char *json = g_strdup_printf ("{\"access_token\":\"t\",\"expires_in\":%s}", life[i].expires);
+      gint64 expires = -99;
+      g_autofree char *token = jn_token_parse (json, -1, 200, &expires, NULL);
+      jr_case (&c, "token lifetime kept in range", token != NULL && expires == life[i].want,
+               "Input %s  Expected %" G_GINT64_FORMAT "  Got %" G_GINT64_FORMAT, life[i].expires, life[i].want, expires);
+    }
   jr_cases_done (&c);
 }
 
@@ -221,6 +233,11 @@ test_response (void)
                    429, NULL, "try again" },
     { "not JSON",  "<html>gateway</html>", 502, NULL, "502" },
     { "JSON that made json-glib abort (fuzzing)", "null{\"candidates\":[]}", 200, NULL, "HTTP 200" },
+    { "two values, which json-glib 1.8 leaks (fuzzing)", "{}{\"candidates\":[]}", 200, NULL, "HTTP 200" },
+    { "a broken escape refused (json-glib 1.8 leaks)", "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\\u12\"}]}}]}",
+                   200, NULL, "HTTP 200" },
+    { "a surrogate pair is one character", "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok \\ud83d\\ude00 \\u00e9\\n\\\"\"}]}}]}",
+                   200, "ok \xf0\x9f\x98\x80 \xc3\xa9\n\"", NULL },
   };
   JrCases c = { "response", 0, 0 };
   for (gsize i = 0; i < G_N_ELEMENTS (t); i++)
@@ -232,6 +249,16 @@ test_response (void)
       jr_case (&c, t[i].name, ok, "Expected %s  Got %s", t[i].text ? t[i].text : t[i].says,
                got ? got : (error ? error->message : "nothing"));
     }
+  /* A lone surrogate: json-glib 1.10 refuses the answer, 1.8 passes
+   * broken bytes on (and drops the character after them); either way
+   * only valid text comes out (fuzzing). */
+  g_autoptr (GError) error = NULL;
+  g_autofree char *got = jn_ai_parse_response ("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\\ud800b\"}]}}]}",
+                                               -1, 200, &error);
+  gboolean ok = got != NULL ? g_utf8_validate (got, -1, NULL) && got[0] == 'a'
+                            : error != NULL;
+  jr_case (&c, "a lone surrogate never comes out as broken text", ok, "Got %s",
+           got ? got : (error ? error->message : "nothing"));
   jr_cases_done (&c);
 }
 

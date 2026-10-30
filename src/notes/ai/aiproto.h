@@ -31,7 +31,9 @@ gboolean jn_adc_parse      (const char *json, gssize len, JnAdc *out, GError **e
 void     jn_adc_clear      (JnAdc *adc);
 /* The x-www-form-urlencoded body for JN_TOKEN_URL. */
 char    *jn_adc_token_form (const JnAdc *adc);
-/* The access token from the token endpoint's answer (HTTP `status`). */
+#define JN_TOKEN_MAX_SECONDS (24 * 60 * 60)
+/* The access token from the token endpoint's answer (HTTP `status`);
+ * *expires_in is its lifetime in seconds, 0 to JN_TOKEN_MAX_SECONDS. */
 char    *jn_token_parse    (const char *json, gssize len, int status, gint64 *expires_in, GError **error);
 
 /* ---- what goes to Gemini ------------------------------------------------ */
