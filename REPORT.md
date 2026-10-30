@@ -1,6 +1,6 @@
 # Journal and Notes: test and safety report
 
-30 October 2026, tested at commit 3f12384. What protects your writing, how it was
+30 October 2026, tested at commit 755ef34. What protects your writing, how it was
 tested, what testing found, and what only you can check.
 
 ## What protects what
@@ -48,7 +48,7 @@ strong login password cover that.
 | Valgrind (core, fuzz replays) | 0 errors, 0 leaks |
 | GCC static analyzer | 0 findings |
 | Fuzzing, 10 targets (5 Journal, 5 Notes), libFuzzer + ASan + UBSan | 9 bugs found, all fixed; every input kept and replayed on each test run |
-| SonarQube Cloud quality gate | passed: 0 open issues, 91.8% coverage on new code, A ratings for reliability, security and maintainability |
+| SonarQube Cloud quality gate | passed: 0 open issues, 91.9% coverage on new code, A ratings for reliability, security and maintainability |
 | GitHub CI (build, tests, sanitizers, 10 fuzz jobs) | all 12 jobs pass |
 | Crash safety: writer killed at random 50 times per run | every saved entry survives |
 | Network jail and AppArmor, probed from outside | everything refused |
