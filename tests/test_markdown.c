@@ -124,6 +124,8 @@ static const SpanCase span_cases[] = {
   { "link",               "see [USACO](https://usaco.guide/x)", "t[see ] link[USACO](https://usaco.guide/x)" },
   { "autolink",           "<https://a.example/b>",        "link[https://a.example/b](https://a.example/b)" },
   { "javascript link is text", "[x](javascript:alert(1))", "t[[x](javascript:alert(1))]" },
+  { "a link with no text shows its address (hidden test)", "see [](https://a.example/x) ok",
+                          "t[see ] link[https://a.example/x](https://a.example/x) t[ ok]" },
   { "file link is text",  "[x](file:///etc/passwd)",      "t[[x](file:///etc/passwd)]" },
   { "unclosed bold",      "a **b",                        "t[a **b]" },
   { "unclosed code",      "a `b",                         "t[a `b]" },

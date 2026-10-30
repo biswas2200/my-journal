@@ -423,7 +423,11 @@ jn_md_spans (const char *text)
                   g_strstrip (url);
                   if (web_link (url))
                     {
-                      push (out, JN_SPAN_LINK, p + 1, close - p - 1, url);
+                      /* [](url) has no text: the address is shown, not lost. */
+                      if (close == p + 1)
+                        push (out, JN_SPAN_LINK, url, -1, url);
+                      else
+                        push (out, JN_SPAN_LINK, p + 1, close - p - 1, url);
                       p = q + 1;
                       continue;
                     }

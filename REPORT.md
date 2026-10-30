@@ -83,6 +83,11 @@ Each one now has its input in `fuzz/corpus/` and a named unit-test
 case. The test fails on the old code and passes on the new one.
 Earlier (Journal): a damaged file could hand the calendar a missing day.
 
+After that, a random test on GitHub found that a link with no text,
+`[](https://...)`, vanished along with its address. It now shows the
+address. Locally, the random tests then ran with 500 seeds for
+Markdown and 100 for each other Notes test, with no failure.
+
 The older-json-glib row and the sign-in row only showed up on GitHub,
 which runs an older Ubuntu than this laptop. They were reproduced and checked in an Ubuntu
 24.04 container. On the way, CI's older GCC analyzer and Sonar also
