@@ -43,7 +43,7 @@ strong login password cover that.
 
 | Check | Result |
 | --- | --- |
-| Unit, UI and integration tests (LeetCode style: tables of cases plus random "hidden" cases) | 40 suites, all pass |
+| Unit, UI and integration tests (LeetCode style: tables of cases plus random "hidden" cases) | 41 suites, all pass |
 | AddressSanitizer + UBSan (core, sandbox, UI) | clean |
 | Valgrind (core, fuzz replays) | 0 errors, 0 leaks |
 | GCC static analyzer | 0 findings |

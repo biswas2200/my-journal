@@ -1,5 +1,5 @@
 project('journal', 'c',
-  version : '1.0.0',
+  version : '0.1.0',
   license : 'MIT',
   license_files : 'LICENSE',
   meson_version : '>= 1.1',
@@ -196,7 +196,7 @@ ai_exe = executable('journal-ai', 'src/notes/ai/helper.c',
 )
 launcher_exe = executable('journal', 'src/launcher/main.c',
   dependencies : [gtk_dep, programs_dep],
-  c_args : '-DJR_PROGRAM_DIR="@0@"'.format(program_dir),
+  c_args : ['-DJR_PROGRAM_DIR="@0@"'.format(program_dir), '-DJR_VERSION="@0@"'.format(meson.project_version())],
   install : true,
 )
 

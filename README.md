@@ -9,6 +9,10 @@ The start screen also opens **Notes**, for study notes: a separate
 program that never sees the journal, with an optional AI "enhanced copy"
 of each note (see [Notes](#notes) and [AI enhanced copy](#ai-enhanced-copy)).
 
+Version 0.1.0: what's in it is in [CHANGELOG.md](CHANGELOG.md), and
+`journal --version` says which one you run. Each `v*` tag becomes a
+GitHub release with the source archive (`.github/workflows/release.yml`).
+
 ## What it does (V1)
 
 1. **Daily journal with a day dropdown.** Opens on today with the cursor
@@ -35,7 +39,8 @@ of each note (see [Notes](#notes) and [AI enhanced copy](#ai-enhanced-copy)).
 
 ```bash
 sudo apt install build-essential meson ninja-build pkg-config \
-  libgtk-4-dev libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev
+  libgtk-4-dev libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev \
+  libsoup-3.0-dev libjson-glib-dev librsvg2-dev
 meson setup build
 meson compile -C build
 meson test -C build            # unit + UI tests
@@ -373,7 +378,7 @@ what only you can check is in [REPORT.md](REPORT.md).
 
 | Check | Result (30 Oct 2026) | How |
 | --- | --- | --- |
-| Unit, UI and integration tests | 40 suites, all pass | `meson test -C build` |
+| Unit, UI and integration tests | 41 suites, all pass | `meson test -C build` |
 | Network jail: every non-local socket family, random and 64-bit domains, a real TCP listener that must receive nothing, io_uring, x32, threads, child programs | all refused | `tests/test_netjail.c` |
 | AppArmor profile, probed from outside without the jail | TCP, UDP, IPv6, DNS via resolved and the link portal refused | `tools/check-apparmor.sh` |
 | Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |

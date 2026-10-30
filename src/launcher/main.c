@@ -268,6 +268,11 @@ on_local_options (GApplication *app, GVariantDict *options, gpointer data)
 {
   (void) app;
   Launcher *l = data;
+  if (g_variant_dict_contains (options, "version"))
+    {
+      g_print ("journal %s\n", JR_VERSION);
+      return 0;
+    }
   const char *open = NULL;
   if (g_variant_dict_lookup (options, "open", "&s", &open))
     {
@@ -306,6 +311,8 @@ main (int argc, char **argv)
   l.app = gtk_application_new (APP_ID, G_APPLICATION_DEFAULT_FLAGS);
   g_application_add_main_option (G_APPLICATION (l.app), "open", 0, G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING,
                                  "Skip the start screen", "journal|notes");
+  g_application_add_main_option (G_APPLICATION (l.app), "version", 0, G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE,
+                                 "Show the version and quit", NULL);
   g_signal_connect (l.app, "handle-local-options", G_CALLBACK (on_local_options), &l);
   g_signal_connect (l.app, "activate", G_CALLBACK (on_activate), &l);
   g_unix_signal_add (SIGTERM, on_signal, &l);

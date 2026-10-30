@@ -63,6 +63,10 @@ test('launcher', find_program('run-headless.sh'),
      args : [files('check-launcher.sh'), launcher_exe],
      suite : 'ui', timeout : 120)
 
+# `journal --version` answers without a display.
+test('version', find_program('check-version.sh'), args : [launcher_exe, meson.project_version()],
+     suite : 'core')
+
 # The Notes editor and window, inside Notes' file lock.
 notes_ui_test = executable('test_notes_ui', 'test_notes_ui.c', dependencies : notes_ui_dep)
 test('notes-ui', find_program('run-headless.sh'), args : [notes_ui_test],

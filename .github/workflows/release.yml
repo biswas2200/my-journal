@@ -1,0 +1,54 @@
+# A release, made when a version tag (v0.1.0) is pushed: the source
+# archive from `meson dist` with its checksum, and the notes for that
+# version from CHANGELOG.md. The tag must match meson.build's version.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build pkg-config gcc libgtk-4-dev \
+            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev libsoup-3.0-dev libjson-glib-dev librsvg2-dev
+
+      - name: Check the tag matches the version
+        run: |
+          meson setup build
+          version=$(meson introspect build --projectinfo | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME but meson.build says $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # The tests already ran on this commit in CI; here only the archive
+      # is made from it.
+      - name: Source archive
+        run: meson dist -C build --no-tests --formats xztar
+
+      - name: Notes for this version
+        run: |
+          awk -v v="$VERSION" '
+            /^## / { on = index($0, "## " v " ") == 1; next }
+            on' CHANGELOG.md > notes.md
+          test -s notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            build/meson-dist/journal-$VERSION.tar.xz build/meson-dist/journal-$VERSION.tar.xz.sha256sum \
+            --title "Journal $VERSION" --notes-file notes.md --verify-tag
