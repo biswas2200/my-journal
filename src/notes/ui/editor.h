@@ -9,8 +9,9 @@
  * Shift+Tab indent and outdent, Backspace right after a bullet turns the
  * line back into text. No syntax is ever shown.
  *
- * Markdown mode shows the stored text itself, to type Markdown by hand.
- * Both modes give the same stored lines (jn_editor_body).
+ * Markdown mode shows the stored text itself, to type Markdown by hand,
+ * with the same note shown formatted below it (a live preview). Both
+ * modes give the same stored lines (jn_editor_body).
  *
  * In the buffer, each formatted line starts with a short tagged prefix:
  * the visible glyph ("● ", "◦ ", "→ ") or, for headings, one invisible
@@ -20,6 +21,7 @@
 
 #include <gtk/gtk.h>
 #include "noteline.h"
+#include "md_view.h"
 
 #define JN_TYPE_EDITOR (jn_editor_get_type ())
 G_DECLARE_FINAL_TYPE (JnEditor, jn_editor, JN, EDITOR, GtkBox)
@@ -32,6 +34,8 @@ char        *jn_editor_body          (JnEditor *e);
 char        *jn_editor_sources       (JnEditor *e);
 void         jn_editor_set_markdown  (JnEditor *e, gboolean on);
 gboolean     jn_editor_get_markdown  (JnEditor *e);
+/* Markdown mode's preview (hidden outside it). */
+JnMdView    *jn_editor_preview       (JnEditor *e);
 /* Sets the format of the cursor's line, or of every selected line. */
 void         jn_editor_set_kind      (JnEditor *e, JnKind kind);
 JnKind       jn_editor_kind_at_cursor (JnEditor *e);

@@ -681,7 +681,12 @@ start_enhancing (JnWindow *win)
   g_clear_object (&win->ai_cancel);
   win->ai_cancel = g_cancellable_new ();
   gtk_button_set_label (GTK_BUTTON (win->enhance_button), "Enhancing\xe2\x80\xa6");
-  set_status (win, "Enhancing: reading your sources, then asking the AI. Keep writing meanwhile.");
+  gboolean has_links = FALSE;
+  for (char **l = links; *l != NULL && !has_links; l++)
+    has_links = *g_strstrip (*l) != '\0';
+  set_status (win, has_links ? "Enhancing: reading your sources, then asking the AI. Keep writing meanwhile."
+                             : "Enhancing: asking the AI (no sources, so it works from what is well known). "
+                               "Keep writing meanwhile.");
   update_page (win);
   win->enhancer->start (win->enhancer, &in, links, win->ai_cancel, on_enhanced, p);
   jn_session_clear (&s);
@@ -698,6 +703,12 @@ on_consent (GObject *src, GAsyncResult *res, gpointer data)
       start_enhancing (win);
     }
   g_object_unref (win);
+}
+
+const char *
+jn_window_status (JnWindow *win)
+{
+  return gtk_label_get_text (GTK_LABEL (win->status));
 }
 
 gboolean
@@ -717,7 +728,8 @@ jn_window_enhance (JnWindow *win)
       g_autofree char *where = win->enhancer->describe (win->enhancer);
       GtkAlertDialog *d = gtk_alert_dialog_new ("Send this note to the AI?");
       g_autofree char *detail = g_strdup_printf (
-        "To write the enhanced copy, Notes sends this session's text, its subject and topic, the pages in Sources, "
+        "To write the enhanced copy, Notes sends this session's text, its subject and topic, the pages in Sources "
+        "(if you added any), "
         "and a few of your other notes (so it can write in your style) to Google: %s, using your Google sign-in.\n\n"
         "Your journal is never sent: Notes cannot even read it. Your note itself is never changed.", where);
       gtk_alert_dialog_set_detail (d, detail);

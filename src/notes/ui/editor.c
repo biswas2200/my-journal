@@ -2,6 +2,7 @@
 #include "editor.h"
 
 #include <string.h>
+#include "md_view.h"
 
 #define H1_MARK "\xe2\x81\xa3" /* U+2063, invisible: marks a heading */
 #define H2_MARK "\xe2\x81\xa4" /* U+2064, invisible: marks a subheading */
@@ -11,6 +12,10 @@
 struct _JnEditor {
   GtkBox         parent_instance;
   GtkTextView   *view, *sources;
+  JnMdView      *preview;     /* Markdown mode: the note formatted */
+  GtkWidget     *preview_scroll;
+  GtkPaned      *split;       /* typed text above, preview below */
+  guint          preview_id;
   GtkTextBuffer *buf, *src;
   GtkTextTag    *prefix, *marker, *glyph;           /* on the prefix */
   GtkTextTag    *h1, *h2, *bullet, *sub, *arrow;    /* on the whole line */
@@ -203,6 +208,8 @@ place_at_text_start (JnEditor *e, int line)
 
 /* ---- markdown mode: the raw stored lines --------------------------- */
 
+static void show_preview (JnEditor *e);
+
 static char *
 raw_line (JnEditor *e, int line)
 {
@@ -359,6 +366,22 @@ jn_editor_set_markdown (JnEditor *e, gboolean on)
   else
     gtk_widget_remove_css_class (GTK_WIDGET (e->view), "markdown");
   jn_editor_load (e, body, sources);
+  /* Markdown mode: what is typed above, the same note formatted below. */
+  g_clear_handle_id (&e->preview_id, g_source_remove);
+  gtk_widget_set_visible (e->preview_scroll, on);
+  if (on)
+    {
+      show_preview (e);
+      int h = gtk_widget_get_height (GTK_WIDGET (e->split));
+      if (h > 0)
+        gtk_paned_set_position (e->split, h / 2);
+    }
+}
+
+JnMdView *
+jn_editor_preview (JnEditor *e)
+{
+  return e->preview;
 }
 
 gboolean
@@ -589,10 +612,28 @@ on_mark_set (GtkTextBuffer *buf, GtkTextIter *where, GtkTextMark *mark, gpointer
 }
 
 static void
+show_preview (JnEditor *e)
+{
+  g_autofree char *body = jn_editor_body (e);
+  jn_md_view_set_markdown (e->preview, body);
+}
+
+static gboolean
+preview_idle (gpointer data)
+{
+  JnEditor *e = data;
+  e->preview_id = 0;
+  show_preview (e);
+  return G_SOURCE_REMOVE;
+}
+
+static void
 on_changed (GtkTextBuffer *buf, gpointer data)
 {
-  (void) buf;
   JnEditor *e = data;
+  /* The preview follows a little behind typing, not on every key. */
+  if (e->markdown && buf == e->buf && e->preview_id == 0)
+    e->preview_id = g_timeout_add (250, preview_idle, e);
   if (!e->loading)
     g_signal_emit (e, signals[CHANGED], 0);
 }
@@ -624,6 +665,7 @@ jn_editor_dispose (GObject *object)
 {
   JnEditor *e = JN_EDITOR (object);
   g_clear_handle_id (&e->restyle_id, g_source_remove);
+  g_clear_handle_id (&e->preview_id, g_source_remove);
   G_OBJECT_CLASS (jn_editor_parent_class)->dispose (object);
 }
 
@@ -653,7 +695,7 @@ jn_editor_init (JnEditor *e)
 
   GtkWidget *src_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
   gtk_widget_add_css_class (src_box, "sources");
-  GtkWidget *src_label = gtk_label_new ("Sources: the links you study from, one per line");
+  GtkWidget *src_label = gtk_label_new ("Sources (optional): the links you study from, one per line");
   gtk_label_set_xalign (GTK_LABEL (src_label), 0.0f);
   gtk_label_set_wrap (GTK_LABEL (src_label), TRUE);
   gtk_widget_add_css_class (src_label, "sources-title");
@@ -710,7 +752,22 @@ jn_editor_init (JnEditor *e)
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroll), GTK_WIDGET (e->view));
   gtk_widget_set_vexpand (scroll, TRUE);
-  gtk_box_append (GTK_BOX (e), scroll);
+
+  e->preview = JN_MD_VIEW (jn_md_view_new ());
+  gtk_widget_add_css_class (GTK_WIDGET (e->preview), "md-preview");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (e->preview), GTK_ACCESSIBLE_PROPERTY_LABEL, "Preview", -1);
+  e->preview_scroll = gtk_scrolled_window_new ();
+  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (e->preview_scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (e->preview_scroll), GTK_WIDGET (e->preview));
+  gtk_widget_set_visible (e->preview_scroll, FALSE);
+
+  e->split = GTK_PANED (gtk_paned_new (GTK_ORIENTATION_VERTICAL));
+  gtk_paned_set_start_child (e->split, scroll);
+  gtk_paned_set_end_child (e->split, e->preview_scroll);
+  gtk_paned_set_shrink_start_child (e->split, FALSE);
+  gtk_paned_set_shrink_end_child (e->split, FALSE);
+  gtk_widget_set_vexpand (GTK_WIDGET (e->split), TRUE);
+  gtk_box_append (GTK_BOX (e), GTK_WIDGET (e->split));
 }
 
 GtkWidget *

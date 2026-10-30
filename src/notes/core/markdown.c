@@ -254,6 +254,17 @@ citation (const char *p)
   return any && *q == ']' && g_ascii_isdigit (p[1]) ? (gsize) (q - p + 1) : 0;
 }
 
+/* "http://..." or "https://...": the only links that open. */
+static gboolean
+web_link (const char *s)
+{
+  const char *scheme = g_uri_peek_scheme (s);
+  if (scheme == NULL)
+    return FALSE;
+  gboolean web = g_str_equal (scheme, "https") || g_str_equal (scheme, "http");
+  return web && strncmp (s + strlen (scheme), "://", 3) == 0;
+}
+
 /* Simple LaTeX the AI may copy from a page ($1 \le k \le N$), as
  * readable text: common commands become symbols, \text{} and grouping
  * braces go, any other \command loses its backslash. */
@@ -369,7 +380,9 @@ jn_md_spans (const char *text)
         }
       if (*p == '[')
         {
-          gsize n = citation (p);
+          /* pre[0] or f(x)[1] is code, not a citation. */
+          gboolean attached = word_char (s, p - 1) || (p > s && (p[-1] == '_' || p[-1] == ')'));
+          gsize n = attached ? 0 : citation (p);
           if (n > 0)
             {
               push (out, JN_SPAN_CITE, p + 1, (gssize) n - 2, NULL);
@@ -385,15 +398,18 @@ jn_md_spans (const char *text)
                 {
                   if (*q == '(')
                     depth++;
-                  else if (*q == ')' && --depth == 0)
-                    break;
+                  else if (*q == ')')
+                    {
+                      depth--;
+                      if (depth == 0)
+                        break;
+                    }
                 }
               if (*q == ')')
                 {
                   g_autofree char *url = g_strndup (close + 2, (gsize) (q - close - 2));
                   g_strstrip (url);
-                  gboolean web = strncmp (url, "https://", 8) == 0 || strncmp (url, "http://", 7) == 0;
-                  if (web)
+                  if (web_link (url))
                     {
                       push (out, JN_SPAN_LINK, p + 1, close - p - 1, url);
                       p = q + 1;
@@ -404,7 +420,7 @@ jn_md_spans (const char *text)
                 }
             }
         }
-      gboolean autolink = *p == '<' && (strncmp (p + 1, "https://", 8) == 0 || strncmp (p + 1, "http://", 7) == 0);
+      gboolean autolink = *p == '<' && web_link (p + 1);
       if (autolink)
         {
           const char *end = strchr (p, '>');

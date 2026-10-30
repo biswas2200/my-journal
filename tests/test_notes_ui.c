@@ -285,6 +285,39 @@ test_markdown_mode (void)
   gtk_window_destroy (GTK_WINDOW (w));
 }
 
+/* Markdown mode shows the note formatted beside what is typed, and keeps
+ * up with typing; outside Markdown mode there is no preview. */
+static void
+test_markdown_preview (void)
+{
+  GtkWidget *w;
+  JnEditor *e = new_editor (&w);
+  JnMdView *pv = jn_editor_preview (e);
+  jn_editor_load (e, "# Title\n- a **bold** point\n→ so", "");
+  g_assert_false (gtk_widget_is_visible (GTK_WIDGET (pv)));
+  jn_editor_set_markdown (e, TRUE);
+  pump (100);
+  g_assert_true (gtk_widget_is_visible (GTK_WIDGET (pv)));
+  GtkTextBuffer *pb = gtk_text_view_get_buffer (GTK_TEXT_VIEW (pv));
+  GtkTextIter a, z;
+  gtk_text_buffer_get_bounds (pb, &a, &z);
+  g_autofree char *shown = gtk_text_buffer_get_text (pb, &a, &z, FALSE);
+  g_assert_nonnull (strstr (shown, "Title"));
+  g_assert_nonnull (strstr (shown, "bold point"));
+  g_assert_null (strstr (shown, "# "));
+  g_assert_null (strstr (shown, "**"));
+  g_assert_null (strstr (shown, "- a"));
+  /* Typing shows up in the preview shortly after. */
+  GtkTextIter end;
+  gtk_text_buffer_get_end_iter (buf (e), &end);
+  gtk_text_buffer_insert (buf (e), &end, "\n## Later part", -1);
+  pump (600);
+  g_assert_cmpstr (jn_md_view_get_markdown (pv), ==, "# Title\n- a **bold** point\n→ so\n## Later part");
+  jn_editor_set_markdown (e, FALSE);
+  g_assert_false (gtk_widget_is_visible (GTK_WIDGET (pv)));
+  gtk_window_destroy (GTK_WINDOW (w));
+}
+
 /* ---- the window ------------------------------------------------------------ */
 
 typedef struct {
@@ -528,7 +561,8 @@ fake_answer (gpointer data)
   FakeCall *c = data;
   JnAiSource src[] = { { (char *) "https://cp-algorithms.com/prefix", NULL, NULL },
                        { (char *) "ftp://old", NULL, (char *) "only http and https links are fetched" } };
-  JnAiAnswer a = { (char *) c->f->reply, (char *) "gemini-3.8-flash", NULL, src, 2 };
+  gsize n = c->f->links != NULL && *c->f->links != '\0' ? 2 : 0; /* no links, no sources */
+  JnAiAnswer a = { (char *) c->f->reply, (char *) "gemini-3.8-flash", NULL, src, n };
   c->done (c->f->error == NULL ? &a : NULL, c->f->error, c->user);
   g_free (c);
   return G_SOURCE_REMOVE;
@@ -699,6 +733,22 @@ test_enhance (void)
   g_autofree char *kept = jn_db_get_enhanced (db, session, NULL, NULL);
   g_assert_cmpstr (kept, ==, stored);
 
+  /* Sources are optional: a note with no links is enhanced too, and
+   * nothing claims pages were read. */
+  fake.error = NULL;
+  jn_window_add_topic (win, "Two pointers");
+  type (e, "- two indexes move toward each other");
+  g_assert_true (jn_window_enhance (win));
+  g_assert_cmpint (fake.calls, ==, 3);
+  g_assert_cmpstr (fake.links, ==, "");
+  g_assert_null (strstr (jn_window_status (win), "reading your sources"));
+  g_assert_nonnull (strstr (jn_window_status (win), "asking the AI"));
+  pump (300);
+  g_autofree char *bare = jn_window_enhanced_text (win);
+  g_assert_nonnull (bare);
+  g_assert_true (g_str_has_prefix (bare, "# Two pointers (enhanced)\n"));
+  g_assert_null (strstr (bare, "Sources:"));
+
   gtk_window_close (GTK_WINDOW (win));
   pump (100);
   g_remove (ref_file);
@@ -735,6 +785,7 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/cursor-skips-prefix", test_cursor_skips_prefix);
   g_test_add_func ("/notes-ui/toolbar", test_toolbar);
   g_test_add_func ("/notes-ui/markdown-mode", test_markdown_mode);
+  g_test_add_func ("/notes-ui/markdown-preview", test_markdown_preview);
   g_test_add_func ("/notes-ui/window-flow", test_window_flow);
   g_test_add_func ("/notes-ui/enhance", test_enhance);
   g_test_add_func ("/notes-ui/md-view", test_md_view);

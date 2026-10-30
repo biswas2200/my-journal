@@ -53,17 +53,17 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Notes store: subjects and topics unique ignoring case in any script, trimmed, never empty; sessions newest first; end time follows edits only while studying (30 min); empty sessions dropped; deletes cascade; ids never reused; restart keeps everything; file 0600 in 0700, newer version refused; hidden model of 1 500 random operations; 1 MiB note, 10 000 sessions | `core/notesdb` |
 | Export: session times (midnight, under a minute, clock back), file names that cannot leave the folder or hide (hidden, 5 000 random names), the whole topic as Markdown with headings moved down | `core/noteexport` |
 | Notes file lock: the journal and keyring are on no list and unreachable (open, list, write, `..`, symlink, hard link, rename, `/proc/self/root`, child programs); its own data, settings, cache and exports work; the system is read-only; the journal is untouched afterwards | `sandbox/notesjail` |
-| Notes editor, typed key by key: every format and shortcut, lists, indent, Backspace, Enter before a heading, undo, the cursor never inside a bullet or marker, toolbar on a selection, Markdown mode both ways | `ui/notes-ui` |
+| Notes editor, typed key by key: every format and shortcut, lists, indent, Backspace, Enter before a heading, undo, the cursor never inside a bullet or marker, toolbar on a selection, Markdown mode both ways; Markdown mode's live preview shows the note formatted (no markup left), follows typing, and is hidden outside Markdown mode | `ui/notes-ui` (`/notes-ui/markdown-preview`) |
 | Notes window: a session starts on the first keystroke and autosaves; switching saves at once; looking creates nothing; empty sessions vanish; export writes `<subject>/<topic>.md`; Home saves and closes; all inside the file lock | `ui/notes-ui` (`/notes-ui/window-flow`) |
 | Page to text: tags, scripts, styles, comments, entities (bad and surrogate ones kept), blocks and lists, `<pre>`, broken or hostile HTML, invalid UTF-8; hidden random tag soup; 5 MB page in linear time | `core/textify` |
 | Links and addresses: only http/https on 80/443, no credentials; every private, loopback, link-local, carrier-NAT, multicast, reserved and documentation range refused, IPv4 and IPv6 and IPv4-inside-IPv6; hidden 20 000 private addresses | `core/netguard` |
-| AI exchange: Google sign-in file (only authorized_user; broken, partial, other kinds), token answers (revoked, server trouble), the request (the person's rules, fenced note and sources that hostile text cannot close, style samples, thinking kept low), Gemini answers (thoughts left out, cut off, blocked, quota, permission), Notes <-> helper messages, the stored copy; no secret in any error | `core/aiproto` |
+| AI exchange: Google sign-in file (only authorized_user; broken, partial, other kinds), token answers (revoked, server trouble), the request (the person's rules: sources optional, only what is sure without them, nothing invented, no corporate jargon; fenced note and sources that hostile text cannot close; a request with no sources, or none readable, says so and holds no source block; style samples, thinking kept low), Gemini answers (thoughts left out, cut off, blocked, quota, permission), Notes <-> helper messages, the stored copy; no secret in any error | `core/aiproto` |
 | Fetching from a local server: pages, plain text, redirects, 404, PDF, script-only pages, a 5 MB page capped; the host check and the per-connection check each stop a request before it reaches the server | `core/fetch` |
 | The helper's lock: only the allowed port connects, any other is refused, nothing listens; the journal, the notes, settings and every write refused; certificates and network settings readable | `sandbox/notesjail` (`/notesjail/helper-lock`) |
 | The real helper against a fake Gemini: token and project as headers, the note, rules and sources in the request, Markdown back; a port not allowed is unreachable; a broken request or Gemini error gives one sentence and never the token | `sandbox/ai-helper` |
 | Notes' AI client with fake Google services: one token, reused; the refresh token and client secret reach only the token endpoint; revoked, missing sign-in, no project, missing helper each explained | `sandbox/ai-client` |
-| Enhance in the window: nothing to send without a note; nothing sent until you agree; the note, links and a style sample go; writing goes on meanwhile; the copy is saved and shown beside the unchanged note, comes back with its session, and an error keeps the old copy | `ui/notes-ui` (`/notes-ui/enhance`) |
-| Reading the copy's Markdown: headings, bullets and depth, numbered, arrows, code fences (a fence inside a list, unclosed, an info line that is not a language), rules; bold, italic, code, links (only web links), `[n]` citations, `$math$` as plain symbols, prices left alone; hidden random text keeps every letter | `core/markdown` |
+| Enhance in the window: nothing to send without a note; nothing sent until you agree; the note, links and a style sample go; writing goes on meanwhile; the copy is saved and shown beside the unchanged note, comes back with its session, and an error keeps the old copy; a note with no links is enhanced too, and nothing claims pages were read | `ui/notes-ui` (`/notes-ui/enhance`) |
+| Reading the copy's Markdown: headings, bullets and depth, numbered, arrows, code fences (a fence inside a list, unclosed, an info line that is not a language), rules; bold, italic, code, links (only web links), `[n]` citations (but `pre[0]`, `a[1]` are code, not citations), `$math$` as plain symbols, prices left alone; hidden random text keeps every letter | `core/markdown` |
 | Diagram safety: scripts, handlers, links, images (remote and local files), `foreignObject`, `use`, style sheets and attributes, remote `url()`, comments, processing instructions removed; DOCTYPE, unknown entities, huge sizes, deep nesting, too many shapes, oversized input refused; cleaning twice changes nothing; hidden random fragments never yield markup that can act | `core/svgsafe` |
 | The formatted copy: every kind of line shown with its look, links open, a wide diagram fits the pane, an unsafe one shows a note instead | `ui/notes-ui` (`/notes-ui/md-view`) |
 | Topic reference: every enhanced copy of a topic oldest first, headings moved down, written-by lines dropped; the sidebar row appears right after an answer and exports; a long error never widens the window | `core/noteexport`, `core/notesdb`, `ui/notes-ui` (`/notes-ui/enhance`) |
@@ -248,3 +248,14 @@ write a few lines, put a page you studied (e.g. a Wikipedia article) in
 Sources, press **✦ Enhance** and agree. Within a minute the copy appears
 on the right: your points in your order, added facts cited `[1]`, a
 "Gaps" list, and your note on the left exactly as you wrote it.
+
+Then a second topic with Sources left empty: the copy has no `[n]`
+marks and no "Sources:" list, adds only standard facts, and has no
+corporate words (leverage, utilize, synergy, robust...).
+
+### 14. Markdown preview
+
+In a note, press `Ctrl+M`: the Markdown is on top, the same note
+formatted below. Type `## Idea` and `- **key** point`: within a moment
+the preview shows a heading and a bullet with "key" in bold, and no `#`
+or `*` signs. `Ctrl+M` again: the preview goes away.

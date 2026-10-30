@@ -48,6 +48,8 @@ char     *jn_window_enhanced_text  (JnWindow *win);
 void      jn_window_open_reference (JnWindow *win, gint64 topic);
 gboolean  jn_window_in_reference   (JnWindow *win);
 gboolean  jn_window_is_enhancing   (JnWindow *win);
+/* The status line's text (for tests). */
+const char *jn_window_status       (JnWindow *win);
 
 gint64    jn_window_topic          (JnWindow *win);
 gint64    jn_window_session        (JnWindow *win); /* 0 until the first keystroke */

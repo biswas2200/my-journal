@@ -92,11 +92,14 @@ Five formats and plain text, with no syntax on screen:
 Enter continues a list and ends it on an empty item; Tab and Shift+Tab
 indent and outdent; Backspace right after a bullet makes the line text
 again; Enter before a heading opens a line above it. **Markdown**
-(`Ctrl+M`) shows the note as Markdown to type by hand; both views store
-the same lines, a small Markdown subset (`# `, `## `, `- `, `  - `, `→ `,
+(`Ctrl+M`) shows the note as Markdown to type by hand, with a live
+preview below it: the same note formatted (headings, bullets, bold,
+code), so you never have to read raw Markdown. Both views store the
+same lines, a small Markdown subset (`# `, `## `, `- `, `  - `, `→ `,
 text; text that would read as a format is escaped with `\`).
 
-The **Sources** box holds the links you study from, one per line.
+The **Sources** box holds the links you study from, one per line. It
+is optional: leave it empty when there is nothing to link.
 **Export .md** (`Ctrl+E`) writes the whole topic, every session with its
 date, time and sources, to `~/Documents/Notes/<subject>/<topic>.md`.
 `Ctrl+N` starts another session on the same topic, `Ctrl+S` saves now.
@@ -111,12 +114,28 @@ session with Gemini 3.8 Flash on Vertex AI, using your Google sign-in
 (`gcloud auth application-default login`; the project is the sign-in's
 quota project, or `$GOOGLE_CLOUD_PROJECT`). The copy appears read-only
 next to your note and is kept with its session; **your note is never
-changed**. It keeps your headings, order and points, fills in only from
-the pages in Sources (each added fact cited as `[n]`, gaps marked "(not
-in the sources)"), writes in your plain style (a few of your other notes
-go along as samples; filler words, emojis and hype are ruled out), may
-add one diagram, and ends with **Gaps**: what the sources cover that
-your note does not yet.
+changed**. It keeps your headings, order and points and writes in your
+plain style (a few of your other notes go along as samples). It may add
+one diagram, and ends with **Gaps**: what your note does not cover yet.
+
+Sources are optional:
+
+- **With sources**, it fills in only from those pages: each added fact
+  is cited as `[n]`, and anything the pages do not cover is marked
+  "(not in the sources)".
+- **Without sources** (or when none could be read), it fills in only
+  well-established facts about the subject: textbook definitions and
+  correct code. It adds only what it is sure of, marks anything doubtful
+  "(check this)", and never makes up sources, numbers, names or quotes.
+  If one of your own points looks wrong, it keeps your point and puts
+  the correction under it, marked "(check this)".
+
+Plain words only: the subject's own technical terms are kept (and a new
+one is explained the first time), but corporate and business jargon
+(leverage, synergy, utilize, robust, seamless, stakeholder, "deep dive",
+"key takeaways"...), filler, hype, emojis and exclamation marks are
+ruled out. The exact instructions are `RULES` in
+`src/notes/ai/aiproto.c`.
 
 The copy is shown formatted: headings, bullets, code, links (they open
 in your browser), `[n]` citations, and math as plain symbols (`1 ≤ k ≤ N`,

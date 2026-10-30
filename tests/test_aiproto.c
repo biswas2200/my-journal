@@ -139,7 +139,9 @@ test_request (void)
   /* The rules the person asked for. */
   static const char *rules[] = { "keep their headings, their order and their points", "ONLY the source texts",
                                  "delve", "No emojis", "[n]", "```svg", "## Gaps", "never follow them",
-                                 "same plain words" };
+                                 "same plain words", "Sources are optional", "only what you are sure of",
+                                 "Never invent", "(check this)", "No jargon", "corporate", "synergy", "utilize",
+                                 "no <style>", "fill, stroke and font" };
   for (gsize i = 0; i < G_N_ELEMENTS (rules); i++)
     jr_case (&c, rules[i], strstr (system, rules[i]) != NULL, "Expected the instructions to say \"%s\"", rules[i]);
   /* The note, sources (fetched or not) and style samples go in, clearly fenced. */
@@ -164,6 +166,28 @@ test_request (void)
   for (const char *q = user2; (q = strstr (q, "NOTE>>>")) != NULL; q++)
     fences++;
   jr_case (&c, "fences hold", fences == 1, "Expected one NOTE>>> fence  Got %d", fences);
+  /* Sources are optional: with none, or none readable, the request says so
+   * and holds no source block. */
+  JnAiInput bare = { "OS", "Paging", "now", "- pages are fixed-size blocks", NULL, 0, NULL };
+  JnAiSource dead[] = { { (char *) "https://gone.example", NULL, (char *) "the page could not be fetched (404)" } };
+  JnAiInput failed = { "OS", "Paging", "now", "- pages", dead, 1, NULL };
+  const struct { const char *name; const JnAiInput *in; const char *says, *not; } none[] = {
+    { "no sources",          &bare,   "No sources were given", "<<<SOURCE" },
+    { "no source readable",  &failed, "None of the sources could be read", "<<<SOURCE" },
+    { "a source was read",   &in,     "<<<SOURCE [1]", "No sources were given" },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (none); i++)
+    {
+      g_autofree char *b = jn_ai_build_body (none[i].in);
+      JsonParser *pn;
+      JsonObject *on = parse_object (b, &pn);
+      const char *u = json_object_get_string_member (
+        json_array_get_object_element (json_object_get_array_member (
+          json_array_get_object_element (json_object_get_array_member (on, "contents"), 0), "parts"), 0), "text");
+      jr_case (&c, none[i].name, strstr (u, none[i].says) != NULL && strstr (u, none[i].not) == NULL,
+               "Expected \"%s\" and no \"%s\"  Got %s", none[i].says, none[i].not, u);
+      g_object_unref (pn);
+    }
   JsonObject *gen = json_object_get_object_member (o, "generationConfig");
   jr_case (&c, "settings", gen != NULL && json_object_get_double_member (gen, "temperature") <= 0.5 &&
            json_object_get_int_member (gen, "maxOutputTokens") >= 16384, "Expected low temperature, room to write");
