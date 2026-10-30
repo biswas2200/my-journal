@@ -101,8 +101,32 @@ text; text that would read as a format is escaped with `\`).
 The **Sources** box holds the links you study from, one per line. It
 is optional: leave it empty when there is nothing to link.
 **Export .md** (`Ctrl+E`) writes the whole topic, every session with its
-date, time and sources, to `~/Documents/Notes/<subject>/<topic>.md`.
+date, time and sources (and the time studied), to
+`~/Documents/Notes/<subject>/<topic>.md`.
 `Ctrl+N` starts another session on the same topic, `Ctrl+S` saves now.
+
+### Study stopwatch and timer
+
+Under the session's time is a study clock for the open topic:
+
+- **Stopwatch** counts up while you study.
+- **Timer** counts down from the minutes you set (25 to start with, 1 to
+  600). At zero it stops by itself, rings the bell, shows a desktop
+  notification and says "Time's up" in the status line. **Start again**
+  runs it once more.
+- **Start / Pause** (`Ctrl+T`) and **Reset**. The mode and the minutes
+  change only while the clock is stopped.
+
+The time it runs is logged to the topic that is open: when you pause,
+reset or switch mode, when a timer ends, when you open another topic
+(the clock keeps running, now for that topic), when you leave or close
+Notes, and once a minute while it runs, so a crash loses at most a
+minute. Next to the session's time you see "Today 25 min · 3 h 10 min in
+all" for the topic, and the topic's export says "Time studied". The
+clock uses the system's monotonic clock, so time the laptop spends
+asleep is not counted. Study time lives in the same `notes.db` (table
+`study_log`) and goes when its topic or subject is deleted; the journal
+never sees it.
 
 Notes live in `~/.local/share/journal-notes/notes.db` (0600 in a 0700
 folder). They are study material, so the file is not encrypted.
@@ -411,13 +435,15 @@ src/diary/    `journal-diary`: the Journal's main(), in the network jail
 src/notes/    `journal-notes`: Notes (study notes, AI enhanced copy)
   core/       plain C, no UI, nothing of the Journal: noteline (the six
               line kinds), notesdb (SQLite), notesjail (Landlock),
-              noteexport (Markdown export, topic reference), markdown
+              noteexport (Markdown export, topic reference), studyclock
+              (the stopwatch and timer, no real clock inside), markdown
               (reading the copy's Markdown), svgsafe (diagram safety)
   ai/         textify (page to text), netguard (which links and
               addresses), aiproto (sign-in, Gemini request and answer,
               Notes <-> helper messages), fetch (Sources), client (Notes'
               side), helper.c (`journal-ai`, the locked-down helper)
-  ui/         editor (formats, Markdown mode), md_view (the formatted
+  ui/         editor (formats, Markdown mode), clock_bar (the study
+              stopwatch and timer row), md_view (the formatted
               copy), notes_window
 src/core/   plain C, no UI, fully unit tested
   jdate       local days, parsing, formatting

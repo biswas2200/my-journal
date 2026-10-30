@@ -8,7 +8,7 @@
  * Names are trimmed, not empty, and unique ignoring case (any script):
  * subjects among subjects, topics within their subject. Ids count from 1
  * per table and are never reused. Deleting a subject or topic deletes
- * everything in it. */
+ * everything in it, its study time too. */
 #pragma once
 
 #include <glib.h>
@@ -60,6 +60,14 @@ char    *jn_db_get_enhanced     (JnDb *db, gint64 session, char **model, gint64 
 /* A topic's enhanced copies, oldest session first. */
 typedef void (*JnCopyFunc) (gint64 session, gint64 started, gint64 ended, const char *markdown, gpointer user);
 void     jn_db_foreach_enhanced (JnDb *db, gint64 topic, JnCopyFunc fn, gpointer user);
+
+/* Study time (stopwatch and timer), per topic; it goes when the topic
+ * goes. A run is logged as `seconds` (1 s to JN_STUDY_MAX_RUN) at `at`;
+ * FALSE for no time, more than a day, or a missing topic. */
+#define JN_STUDY_MAX_RUN (24 * 60 * 60)
+gboolean jn_db_add_study        (JnDb *db, gint64 topic, gint64 at, gint64 seconds);
+/* Seconds logged on the topic at or after `since` (0: all of it). */
+gint64   jn_db_studied          (JnDb *db, gint64 topic, gint64 since);
 
 /* Small settings (e.g. "ai_consent"). */
 gboolean jn_db_set_setting      (JnDb *db, const char *key, const char *value);

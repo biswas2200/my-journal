@@ -42,6 +42,14 @@ static const char SCHEMA[] =
   "  markdown TEXT NOT NULL,"
   "  model TEXT NOT NULL,"
   "  created INTEGER NOT NULL);"
+  /* Study time from the stopwatch and timer: one row per stretch logged.
+   * Added in place (older files gain it when opened), so still version 1. */
+  "CREATE TABLE IF NOT EXISTS study_log ("
+  "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+  "  topic INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,"
+  "  at INTEGER NOT NULL,"
+  "  seconds INTEGER NOT NULL CHECK (seconds > 0));"
+  "CREATE INDEX IF NOT EXISTS study_by_topic ON study_log (topic, at);"
   "CREATE TABLE IF NOT EXISTS settings ("
   "  key TEXT PRIMARY KEY,"
   "  value TEXT NOT NULL);"
@@ -418,6 +426,29 @@ jn_db_get_setting (JnDb *db, const char *key)
   char *v = s != NULL && sqlite3_step (s) == SQLITE_ROW ? g_strdup ((const char *) sqlite3_column_text (s, 0)) : NULL;
   sqlite3_finalize (s);
   return v;
+}
+
+gboolean
+jn_db_add_study (JnDb *db, gint64 topic, gint64 at, gint64 seconds)
+{
+  if (seconds <= 0 || seconds > JN_STUDY_MAX_RUN)
+    return FALSE;
+  sqlite3_stmt *s = prepare (db, "INSERT INTO study_log (topic, at, seconds) VALUES (?, ?, ?)");
+  bind_int (s, 1, topic);
+  bind_int (s, 2, at);
+  bind_int (s, 3, seconds);
+  return done (db, s);
+}
+
+gint64
+jn_db_studied (JnDb *db, gint64 topic, gint64 since)
+{
+  sqlite3_stmt *s = prepare (db, "SELECT total(seconds) FROM study_log WHERE topic = ? AND at >= ?");
+  bind_int (s, 1, topic);
+  bind_int (s, 2, since);
+  gint64 total = s != NULL && sqlite3_step (s) == SQLITE_ROW ? (gint64) sqlite3_column_double (s, 0) : 0;
+  sqlite3_finalize (s);
+  return total;
 }
 
 char **

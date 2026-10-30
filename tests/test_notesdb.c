@@ -25,6 +25,10 @@
  *   style TOPIC N        -> body|body    up to N recent notes from other
  *                                        topics, newest first, to show the
  *                                        AI how this person writes
+ *   study TOPIC SECS @T  -> true|false  log SECS seconds of study on the
+ *                                        topic at T (1 s to a day per run)
+ *   studied TOPIC @SINCE -> seconds     study logged on the topic at or
+ *                                        after SINCE
  *   reopen               -> ok          close and open the file again
  *
  * Ids count from 1 in each table and are never reused. */
@@ -174,6 +178,10 @@ run_op (Store *st, char **a, int n)
       g_auto (GStrv) bodies = jn_db_style_samples (st->db, num (a[1]), (int) num (a[2]), 4000);
       return g_strjoinv ("|", bodies);
     }
+  if (strcmp (op, "study") == 0 && n == 4)
+    return yes (jn_db_add_study (st->db, num (a[1]), num (a[3]), num (a[2])));
+  if (strcmp (op, "studied") == 0 && n == 3)
+    return g_strdup_printf ("%" G_GINT64_FORMAT, jn_db_studied (st->db, num (a[1]), num (a[2])));
   if (strcmp (op, "reopen") == 0 && n == 1)
     {
       jn_db_close (st->db);
@@ -309,6 +317,20 @@ static const ScriptCase scripts[] = {
                             "subj A -> 1; topic 1 T -> 1; topic 1 U -> 2; start 1 @10 -> 1; start 2 @20 -> 2;"
                             "start 2 @30 -> 3; start 2 @40 -> 4; save 2 '- two' '' @21 -> true; save 3 '- three' '' @31 -> true;"
                             "save 1 '- own topic' '' @11 -> true; style 1 5 -> - three|- two; style 1 1 -> - three; style 2 5 -> - own topic" },
+  { "study time adds up",   "subj A -> 1; topic 1 T -> 1; study 1 1500 @1000 -> true; study 1 300 @5000 -> true;"
+                            "studied 1 @0 -> 1800; studied 1 @2000 -> 300; studied 1 @5000 -> 300; studied 1 @5001 -> 0" },
+  { "study time per topic", "subj A -> 1; topic 1 T -> 1; topic 1 U -> 2; study 1 60 @10 -> true; study 2 90 @10 -> true;"
+                            "studied 1 @0 -> 60; studied 2 @0 -> 90; studied 9 @0 -> 0" },
+  { "no study time is refused", "subj A -> 1; topic 1 T -> 1; study 1 0 @1 -> false; study 1 -5 @1 -> false;"
+                            "studied 1 @0 -> 0" },
+  { "more than a day in one run is refused", "subj A -> 1; topic 1 T -> 1; study 1 86400 @1 -> true;"
+                            "study 1 86401 @2 -> false; studied 1 @0 -> 86400" },
+  { "study of a missing topic", "study 9 60 @1 -> false" },
+  { "study time goes with its topic", "subj A -> 1; topic 1 T -> 1; study 1 60 @1 -> true; deltopic 1 -> true;"
+                            "topic 1 T -> 2; studied 1 @0 -> 0; studied 2 @0 -> 0" },
+  { "and with its subject", "subj A -> 1; topic 1 T -> 1; study 1 60 @1 -> true; delsubj 1 -> true; studied 1 @0 -> 0" },
+  { "study time survives a restart", "subj A -> 1; topic 1 T -> 1; study 1 60 @1 -> true; reopen -> ok;"
+                            "studied 1 @0 -> 60" },
   { "quotes and unicode",   "subj \"it's\" -> 1; subj 'टिप्पणी' -> 2; subjects -> it's,टिप्पणी" },
   { "case folding beyond ASCII", "subj 'Ärzte' -> 1; subj 'ärzte' -> 0; subj 'ÉCOLE' -> 2; subj 'école' -> 0" },
 };
@@ -388,6 +410,32 @@ test_file (void)
   g_assert_cmpint (g_stat (path, &st), ==, 0);
   g_assert_cmpint (st.st_mode & 0777, ==, 0600);
   jn_db_close (db);
+
+  /* A file from before the study log (same version, no table) opens and
+   * gets one; its notes are untouched. */
+  g_autofree char *older = g_build_filename (dir, "older.db", NULL);
+  {
+    sqlite3 *h;
+    g_assert_cmpint (sqlite3_open (older, &h), ==, SQLITE_OK);
+    g_assert_cmpint (sqlite3_exec (h,
+      "CREATE TABLE subjects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, key TEXT NOT NULL UNIQUE,"
+      " created INTEGER NOT NULL);"
+      "CREATE TABLE topics (id INTEGER PRIMARY KEY AUTOINCREMENT, subject INTEGER NOT NULL REFERENCES subjects(id)"
+      " ON DELETE CASCADE, name TEXT NOT NULL, key TEXT NOT NULL, created INTEGER NOT NULL, UNIQUE (subject, key));"
+      "INSERT INTO subjects VALUES (1, 'DSA', 'dsa', 1); INSERT INTO topics VALUES (1, 1, 'Heaps', 'heaps', 1);"
+      "PRAGMA user_version = 1;", NULL, NULL, NULL), ==, SQLITE_OK);
+    sqlite3_close (h);
+  }
+  db = jn_db_open (older, NULL);
+  g_assert_nonnull (db);
+  g_assert_true (jn_db_add_study (db, 1, 100, 1500));
+  g_assert_cmpint (jn_db_studied (db, 1, 0), ==, 1500);
+  g_autofree char *sname = NULL, *tname = NULL;
+  gint64 subject = 0;
+  g_assert_true (jn_db_get_topic (db, 1, &subject, &sname, &tname));
+  g_assert_cmpstr (tname, ==, "Heaps");
+  jn_db_close (db);
+  g_remove (older);
 
   /* A file from a newer Notes is refused and left alone. */
   g_autofree char *newer = g_build_filename (dir, "newer.db", NULL);

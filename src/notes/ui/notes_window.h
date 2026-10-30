@@ -10,6 +10,7 @@
 #include <gtk/gtk.h>
 #include "editor.h"
 #include "client.h"
+#include "clock_bar.h"
 #include "notesdb.h"
 
 #define JN_TYPE_WINDOW (jn_window_get_type ())
@@ -48,6 +49,10 @@ char     *jn_window_enhanced_text  (JnWindow *win);
 void      jn_window_open_reference (JnWindow *win, gint64 topic);
 gboolean  jn_window_in_reference   (JnWindow *win);
 gboolean  jn_window_is_enhancing   (JnWindow *win);
+/* The study stopwatch and timer, and "Today 25 min · 3 h in all" for
+ * the open topic. Study time goes to the topic open while it ran. */
+JnClockBar *jn_window_clock_bar    (JnWindow *win);
+const char *jn_window_studied      (JnWindow *win);
 /* The status line's text (for tests). */
 const char *jn_window_status       (JnWindow *win);
 

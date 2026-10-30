@@ -50,8 +50,11 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Hand-over: exit codes 0/10/11/12 mean quit/Home/Notes/Journal; any other code or signal returns to the start screen with an error; SIGTERM/SIGINT quit | `core/programs` (table, plus every code and signal) |
 | Start screen: Journal → Notes → quit, Notes → Journal, Home, a crash, logout while a program runs (it gets SIGTERM first), bad `--open` | `launcher` (stand-in programs) |
 | Notes lines: six kinds stored as a Markdown subset; Markdown typed by hand (`*`, `+`, tabs, `->`) reads back; text that looks like a format is escaped; every line round-trips (hidden, 20 000 random lines); 100 KB line in linear time; typing shortcuts; Tab/Shift+Tab | `core/noteline` |
-| Notes store: subjects and topics unique ignoring case in any script, trimmed, never empty; sessions newest first; end time follows edits only while studying (30 min); empty sessions dropped; deletes cascade; ids never reused; restart keeps everything; file 0600 in 0700, newer version refused; hidden model of 1 500 random operations; 1 MiB note, 10 000 sessions | `core/notesdb` |
-| Export: session times (midnight, under a minute, clock back), file names that cannot leave the folder or hide (hidden, 5 000 random names), the whole topic as Markdown with headings moved down | `core/noteexport` |
+| Notes store: subjects and topics unique ignoring case in any script, trimmed, never empty; sessions newest first; end time follows edits only while studying (30 min); empty sessions dropped; deletes cascade; ids never reused; restart keeps everything; file 0600 in 0700, newer version refused; hidden model of 1 500 random operations; 1 MiB note, 10 000 sessions; study time per topic (adds up, since a time, none or over a day refused, missing topic refused, goes with its topic and subject, survives a restart, an older file without the study table opens and gains it) | `core/notesdb` |
+| Export: session times (midnight, under a minute, clock back), file names that cannot leave the folder or hide (hidden, 5 000 random names), the whole topic as Markdown with headings moved down, "Time studied" under the subject (none, no line) | `core/noteexport` |
+| Study clock, with no real clock: stopwatch counts up, pause holds, resume adds, reset, start twice is one run, the clock seen going back counts nothing; timer counts down (rounded up, 0:00 only at the end), finishes once and stops at its length, 1 s to 10 h; study seconds handed over whole and never twice, a timer's at most its length, reset forgets the rest; "1:02:03" and "3 h 10 min"; hidden 3 000 random scripts against a model that adds up the running stretches | `core/studyclock` |
+| The clock row with a stand-in clock: time shown, a minute or more logged while running, pause and reset log the rest, a mode change stops and logs first, the timer ends once with its whole length logged and starts again from the top, minutes cannot change under a running timer | `ui/notes-ui` (`/notes-ui/clock-bar`) |
+| Study time in the window: no clock without a topic; time goes to the topic it ran on, also when another topic is opened with the clock running; "Today … · … in all"; "Time's up" in the status line; closing Notes keeps what ran; with Notes' own styles the page fits beside the sidebar in an 800-px window, in both modes | `ui/notes-ui` (`/notes-ui/study-clock`) |
 | Notes file lock: the journal and keyring are on no list and unreachable (open, list, write, `..`, symlink, hard link, rename, `/proc/self/root`, child programs); its own data, settings, cache and exports work; the system is read-only; the journal is untouched afterwards | `sandbox/notesjail` |
 | Notes editor, typed key by key: every format and shortcut, lists, indent, Backspace, Enter before a heading, undo, the cursor never inside a bullet or marker, toolbar on a selection, Markdown mode both ways; Markdown mode's live preview shows the note formatted (no markup left), follows typing, and is hidden outside Markdown mode | `ui/notes-ui` (`/notes-ui/markdown-preview`) |
 | Notes window: a session starts on the first keystroke and autosaves; switching saves at once; looking creates nothing; empty sessions vanish; export writes `<subject>/<topic>.md`; Home saves and closes; all inside the file lock | `ui/notes-ui` (`/notes-ui/window-flow`) |
@@ -259,3 +262,14 @@ In a note, press `Ctrl+M`: the Markdown is on top, the same note
 formatted below. Type `## Idea` and `- **key** point`: within a moment
 the preview shows a heading and a bullet with "key" in bold, and no `#`
 or `*` signs. `Ctrl+M` again: the preview goes away.
+
+### 15. Study stopwatch and timer
+
+Open a topic. Press `Ctrl+T`: the stopwatch counts up. After a minute,
+"Today 1 min" appears next to the session's time. Open another topic
+with it running, then come back: each topic shows only its own time.
+Pause, choose **Timer**, set 1 minute and **Start**: it counts down, and
+at 0:00 the bell rings, a desktop notification says "Time's up", the
+status line says so, and the button reads **Start again**. Suspend the
+laptop for a few minutes with the stopwatch running: on waking it has
+not counted the sleep. **Export .md** shows "Time studied".

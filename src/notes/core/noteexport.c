@@ -3,6 +3,7 @@
 
 #include <string.h>
 #include "noteline.h"
+#include "studyclock.h"
 
 #define MAX_NAME 200
 
@@ -87,6 +88,15 @@ jn_export_new (const char *subject, const char *topic)
   e->md = g_string_new (NULL);
   g_string_append_printf (e->md, "# %s\n\nSubject: %s\n", t, s);
   return e;
+}
+
+void
+jn_export_set_studied (JnExport *e, gint64 seconds)
+{
+  if (seconds <= 0)
+    return;
+  g_autofree char *t = jn_format_studied (seconds);
+  g_string_append_printf (e->md, "Time studied: %s\n", t);
 }
 
 void

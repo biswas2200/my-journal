@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <string.h>
 #include <glib/gstdio.h>
+#include "clock_bar.h"
 #include "md_view.h"
 #include "noteexport.h"
 #include "programs.h"
@@ -23,7 +24,8 @@ struct _JnWindow {
 
   GtkWidget   *nav, *title, *markdown, *export_button;
   GtkWidget   *list, *add_topic;
-  GtkWidget   *span, *new_session, *status, *empty;
+  GtkWidget   *span, *new_session, *status, *empty, *studied;
+  JnClockBar  *clock;          /* study stopwatch and timer */
   JnEditor    *editor;
 
   JnEnhancer   *enhancer;
@@ -89,11 +91,44 @@ update_span (JnWindow *win)
     gtk_label_set_text (GTK_LABEL (win->span), "");
 }
 
+static gint64
+midnight (void)
+{
+  g_autoptr (GDateTime) n = g_date_time_new_now_local ();
+  g_autoptr (GDateTime) m = g_date_time_new_local (g_date_time_get_year (n), g_date_time_get_month (n),
+                                                   g_date_time_get_day_of_month (n), 0, 0, 0);
+  return g_date_time_to_unix (m);
+}
+
+/* "Today 25 min · 3 h 10 min in all" for the open topic. */
+static void
+update_studied (JnWindow *win)
+{
+  gint64 all = win->topic != 0 ? jn_db_studied (win->db, win->topic, 0) : 0;
+  g_autofree char *text = NULL;
+  if (win->topic == 0)
+    text = g_strdup ("");
+  else if (all == 0)
+    text = g_strdup ("Studied: no time yet");
+  else
+    {
+      g_autofree char *today = jn_format_studied (jn_db_studied (win->db, win->topic, midnight ()));
+      g_autofree char *total = jn_format_studied (all);
+      text = g_strdup_printf ("Today %s \xc2\xb7 %s in all", today, total);
+    }
+  gtk_label_set_text (GTK_LABEL (win->studied), text);
+  gtk_widget_set_tooltip_text (win->studied, text);
+}
+
 /* Without a topic there is nothing to write in. */
 static void
 update_page (JnWindow *win)
 {
   gboolean open = win->topic != 0;
+  if (!open && jn_clock_bar_running (win->clock))
+    jn_clock_bar_pause (win->clock);
+  gtk_widget_set_sensitive (GTK_WIDGET (win->clock), open);
+  update_studied (win);
   gtk_widget_set_visible (win->empty, !open);
   gtk_widget_set_visible (GTK_WIDGET (win->editor), open && !win->reference);
   gtk_widget_set_sensitive (win->new_session, open && (win->session != 0 || win->reference));
@@ -133,6 +168,7 @@ jn_window_save (JnWindow *win)
 static void
 close_page (JnWindow *win)
 {
+  jn_clock_bar_flush (win->clock); /* study time so far, to this topic */
   jn_window_save (win);
   if (win->session != 0 && jn_db_drop_if_empty (win->db, win->session))
     win->session = 0;
@@ -301,6 +337,7 @@ jn_window_export (JnWindow *win, GError **error)
       return path;
     }
   JnExport *e = jn_export_new (sn, tn);
+  jn_export_set_studied (e, jn_db_studied (win->db, win->topic, 0));
   GArray *ids = g_array_new (FALSE, FALSE, sizeof (gint64));
   jn_db_foreach_session (win->db, win->topic, collect_ids, ids);
   for (guint i = 0; i < ids->len; i++)
@@ -705,6 +742,18 @@ on_consent (GObject *src, GAsyncResult *res, gpointer data)
   g_object_unref (win);
 }
 
+JnClockBar *
+jn_window_clock_bar (JnWindow *win)
+{
+  return win->clock;
+}
+
+const char *
+jn_window_studied (JnWindow *win)
+{
+  return gtk_label_get_text (GTK_LABEL (win->studied));
+}
+
 const char *
 jn_window_status (JnWindow *win)
 {
@@ -839,6 +888,10 @@ sc_call (GtkWidget *w, GVariant *args, gpointer data)
     case 'e': on_export (NULL, win); break;
     case 'a': jn_window_enhance (win); break;
     case 'q': gtk_window_close (GTK_WINDOW (win)); break;
+    case 't':
+      if (win->topic != 0)
+        jn_clock_bar_toggle (win->clock);
+      break;
     default: break;
     }
   return TRUE;
@@ -870,6 +923,7 @@ install_shortcuts (JnWindow *win)
   shortcut (c, "<Control>e", sc_call, GINT_TO_POINTER ('e'), NULL);
   shortcut (c, "<Control><Shift>e", sc_call, GINT_TO_POINTER ('a'), NULL);
   shortcut (c, "<Control>q", sc_call, GINT_TO_POINTER ('q'), NULL);
+  shortcut (c, "<Control>t", sc_call, GINT_TO_POINTER ('t'), NULL);
   gtk_widget_add_controller (GTK_WIDGET (win), ec);
 }
 
@@ -900,10 +954,39 @@ header_button (const char *label, const char *tip, GCallback cb, gpointer data)
   return b;
 }
 
+/* Study time from the stopwatch or timer goes to the open topic. */
+static void
+on_study (JnClockBar *bar, gint64 seconds, gpointer data)
+{
+  (void) bar;
+  JnWindow *win = data;
+  if (win->db != NULL && win->topic != 0)
+    jn_db_add_study (win->db, win->topic, now (), seconds);
+  update_studied (win);
+}
+
+static void
+on_timer_finished (JnClockBar *bar, gpointer data)
+{
+  JnWindow *win = data;
+  gtk_widget_error_bell (GTK_WIDGET (bar));
+  set_status (win, "Time's up. The time is logged; take a short break, or Start again.");
+  GApplication *app = G_APPLICATION (gtk_window_get_application (GTK_WINDOW (win)));
+  if (app != NULL)
+    {
+      GNotification *n = g_notification_new ("Time's up");
+      g_notification_set_body (n, "Your study timer has finished. The time is logged in Notes.");
+      g_application_send_notification (app, "study-timer", n);
+      g_object_unref (n);
+    }
+}
+
 static void
 jn_window_dispose (GObject *object)
 {
   JnWindow *win = JN_WINDOW (object);
+  if (win->clock != NULL && win->db != NULL)
+    jn_clock_bar_flush (win->clock);
   g_clear_handle_id (&win->save_id, g_source_remove);
   if (win->ai_cancel != NULL)
     g_cancellable_cancel (win->ai_cancel);
@@ -991,10 +1074,20 @@ jn_window_init (JnWindow *win)
   gtk_widget_set_hexpand (win->span, TRUE);
   gtk_label_set_xalign (GTK_LABEL (win->span), 0.0f);
   gtk_box_append (GTK_BOX (info), win->span);
+  win->studied = gtk_label_new (""); /* the time studied on this topic */
+  gtk_label_set_ellipsize (GTK_LABEL (win->studied), PANGO_ELLIPSIZE_END);
+  gtk_widget_add_css_class (win->studied, "faint");
+  gtk_box_append (GTK_BOX (info), win->studied);
   win->new_session = header_button ("+ New session", "Start another session on this topic (Ctrl+N)",
                                     G_CALLBACK (on_new_session), win);
   gtk_box_append (GTK_BOX (info), win->new_session);
   gtk_box_append (GTK_BOX (page), info);
+  /* The study clock on its own row. */
+  win->clock = JN_CLOCK_BAR (jn_clock_bar_new ());
+  gtk_widget_add_css_class (GTK_WIDGET (win->clock), "study-row");
+  g_signal_connect (win->clock, "study", G_CALLBACK (on_study), win);
+  g_signal_connect (win->clock, "finished", G_CALLBACK (on_timer_finished), win);
+  gtk_box_append (GTK_BOX (page), GTK_WIDGET (win->clock));
   win->empty = gtk_label_new ("Add a subject and a topic on the left to start.");
   gtk_widget_add_css_class (win->empty, "empty-page");
   gtk_widget_set_vexpand (win->empty, TRUE);

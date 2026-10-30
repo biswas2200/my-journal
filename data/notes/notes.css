@@ -58,6 +58,13 @@ textview.note-body.markdown, textview.note-body.markdown text {
   font-family: "JetBrains Mono", "IBM Plex Mono", "Ubuntu Sans Mono", "DejaVu Sans Mono", monospace;
   font-size: 13px;
 }
+/* The study clock row, under the session's time. */
+.study-row { padding: 0 28px 10px 28px; }
+.clock-time { font-family: "JetBrains Mono", "IBM Plex Mono", "Ubuntu Sans Mono", "DejaVu Sans Mono", monospace;
+              font-size: 15px; color: #9B9B9B; }
+.clock-time.running { color: #EDEDED; }
+spinbutton.clock-minutes { min-height: 0; font-size: 12px; }
+spinbutton.clock-minutes button { min-width: 18px; padding: 0 4px; }
 /* Markdown mode's preview: the note formatted, under what is typed. */
 textview.md-preview, textview.md-preview text {
   background-color: #0A0A0A;

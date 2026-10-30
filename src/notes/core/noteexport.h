@@ -4,6 +4,7 @@
  *   # Prefix sum
  *
  *   Subject: DSA
+ *   Time studied: 3 h 10 min   (stopwatch and timer, when there is any)
  *
  *   ## 28 Oct 2026, 14:05–15:40
  *
@@ -33,6 +34,9 @@ char     *jn_export_file_name   (const char *topic);
 char     *jn_export_dir         (void);
 
 JnExport *jn_export_new         (const char *subject, const char *topic);
+/* "Time studied: 3 h 10 min" under the subject; before any session.
+ * Nothing for no time. */
+void      jn_export_set_studied (JnExport *e, gint64 seconds);
 /* Sessions in the order they should appear (oldest first). */
 void      jn_export_add_session (JnExport *e, gint64 started, gint64 ended, const char *sources, const char *body);
 /* A topic reference instead: every enhanced copy of the topic, oldest

@@ -120,6 +120,17 @@ test_topic (void)
   g_autofree char *empty = jn_export_finish (e);
   g_assert_cmpstr (empty, ==, "# Paging\n\nSubject: OS\n");
 
+  /* Time studied with the stopwatch or timer goes under the subject;
+   * none, no line. */
+  e = jn_export_new ("OS", "Paging");
+  jn_export_set_studied (e, 3 * 3600 + 10 * MINUTE);
+  g_autofree char *timed = jn_export_finish (e);
+  g_assert_cmpstr (timed, ==, "# Paging\n\nSubject: OS\nTime studied: 3 h 10 min\n");
+  e = jn_export_new ("OS", "Paging");
+  jn_export_set_studied (e, 0);
+  g_autofree char *untimed = jn_export_finish (e);
+  g_assert_cmpstr (untimed, ==, "# Paging\n\nSubject: OS\n");
+
   /* A text line that looks like a heading stays escaped. */
   e = jn_export_new ("A", "B");
   jn_export_add_session (e, T1405, T1405, "", "\\# not a heading");

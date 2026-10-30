@@ -9,6 +9,7 @@
 #include <glib/gstdio.h>
 #include <gtk/gtk.h>
 #include "cases.h"
+#include "clock_bar.h"
 #include "editor.h"
 #include "md_view.h"
 #include "notes_window.h"
@@ -763,6 +764,211 @@ test_enhance (void)
   g_rmdir (dir);
 }
 
+/* ---- the study stopwatch and timer ------------------------------------------ */
+
+typedef struct {
+  gint64 now;              /* the stand-in clock, microseconds */
+  gint64 studied, reports; /* "study": seconds handed over, and how often */
+  int    finished;
+} Clock;
+
+static gint64
+fake_now (gpointer user)
+{
+  return ((Clock *) user)->now;
+}
+
+static void
+on_study (JnClockBar *b, gint64 seconds, gpointer user)
+{
+  (void) b;
+  Clock *k = user;
+  k->studied += seconds;
+  k->reports++;
+}
+
+static void
+on_finished (JnClockBar *b, gpointer user)
+{
+  (void) b;
+  ((Clock *) user)->finished++;
+}
+
+static void
+at (Clock *k, JnClockBar *b, double seconds)
+{
+  k->now = (gint64) (seconds * G_USEC_PER_SEC);
+  jn_clock_bar_tick (b);
+}
+
+/* The bar alone: time shown, study time reported once, timer's end. */
+static void
+test_clock_bar (void)
+{
+  GtkWidget *w = gtk_window_new ();
+  JnClockBar *b = JN_CLOCK_BAR (jn_clock_bar_new ());
+  gtk_window_set_child (GTK_WINDOW (w), GTK_WIDGET (b));
+  gtk_window_present (GTK_WINDOW (w));
+  Clock k = { 0 };
+  jn_clock_bar_set_now_func (b, fake_now, &k);
+  g_signal_connect (b, "study", G_CALLBACK (on_study), &k);
+  g_signal_connect (b, "finished", G_CALLBACK (on_finished), &k);
+
+  /* Stopwatch: counts up; a minute or more is reported while running. */
+  g_assert_cmpint (jn_clock_bar_mode (b), ==, JN_CLOCK_STOPWATCH);
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "0:00");
+  jn_clock_bar_toggle (b);
+  g_assert_true (jn_clock_bar_running (b));
+  at (&k, b, 59.9);
+  g_assert_cmpint (k.reports, ==, 0);
+  at (&k, b, 90.4);
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "1:30");
+  g_assert_cmpint (k.studied, ==, 90);
+  at (&k, b, 100);
+  jn_clock_bar_toggle (b); /* pause: the rest is reported */
+  g_assert_false (jn_clock_bar_running (b));
+  g_assert_cmpint (k.studied, ==, 100);
+  at (&k, b, 500); /* paused: nothing moves */
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "1:40");
+  jn_clock_bar_flush (b);
+  g_assert_cmpint (k.studied, ==, 100);
+  int reports = (int) k.reports;
+
+  /* Reset while running reports what ran. */
+  jn_clock_bar_toggle (b);
+  at (&k, b, 530);
+  jn_clock_bar_reset (b);
+  g_assert_cmpint (k.studied, ==, 130);
+  g_assert_cmpint (k.reports, ==, reports + 1);
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "0:00");
+  g_assert_false (jn_clock_bar_running (b));
+
+  /* Changing to the timer while running stops and reports first. */
+  jn_clock_bar_toggle (b);
+  at (&k, b, 545);
+  jn_clock_bar_set_mode (b, JN_CLOCK_TIMER);
+  jn_clock_bar_set_minutes (b, 1);
+  g_assert_cmpint (k.studied, ==, 145);
+  g_assert_false (jn_clock_bar_running (b));
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "1:00");
+
+  /* Timer: counts down, ends once at zero with all its time reported. */
+  jn_clock_bar_toggle (b);
+  at (&k, b, 545.5);
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "1:00");
+  at (&k, b, 575);
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "0:30");
+  at (&k, b, 700);
+  g_assert_cmpint (k.finished, ==, 1);
+  g_assert_false (jn_clock_bar_running (b));
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "0:00");
+  g_assert_cmpint (k.studied, ==, 205);
+  at (&k, b, 800);
+  g_assert_cmpint (k.finished, ==, 1);
+  g_assert_cmpint (k.studied, ==, 205);
+  /* Start again: from the top. */
+  jn_clock_bar_toggle (b);
+  g_assert_true (jn_clock_bar_running (b));
+  at (&k, b, 810);
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "0:50");
+  /* The minutes cannot change under a running timer. */
+  jn_clock_bar_set_minutes (b, 5);
+  at (&k, b, 811);
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "0:49");
+  jn_clock_bar_pause (b);
+  jn_clock_bar_set_minutes (b, 5);
+  g_assert_cmpstr (jn_clock_bar_text (b), ==, "5:00");
+  g_assert_cmpint (k.studied, ==, 216);
+  gtk_window_destroy (GTK_WINDOW (w));
+}
+
+static gint64
+midnight_today (void)
+{
+  g_autoptr (GDateTime) n = g_date_time_new_now_local ();
+  g_autoptr (GDateTime) m = g_date_time_new_local (g_date_time_get_year (n), g_date_time_get_month (n),
+                                                   g_date_time_get_day_of_month (n), 0, 0, 0);
+  return g_date_time_to_unix (m);
+}
+
+/* The page (note, clock, status) fits beside the sidebar (250 px) in an
+ * 800-px window; any wider and its right side is cut off. */
+static void
+page_fits (JnWindow *win)
+{
+  pump (100);
+  GtkWidget *page = gtk_widget_get_parent (gtk_widget_get_parent (GTK_WIDGET (jn_window_editor (win))));
+  int least = 0;
+  gtk_widget_measure (page, GTK_ORIENTATION_HORIZONTAL, -1, &least, NULL, NULL, NULL);
+  g_assert_cmpint (least, <=, 800 - 250);
+}
+
+/* In the window: time goes to the topic it was studied on, also when the
+ * topic changes with the clock running, and when Notes closes. */
+static void
+test_study_clock (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-clock-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  JnDb *db = jn_db_open (path, NULL);
+  /* Notes' own look (its buttons are roomier than GTK's), as in the app. */
+  GtkCssProvider *css = gtk_css_provider_new ();
+  gtk_css_provider_load_from_resource (css, "/io/github/biswas2200/Journal/Notes/notes.css");
+  gtk_style_context_add_provider_for_display (gdk_display_get_default (), GTK_STYLE_PROVIDER (css),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  JnWindow *win = jn_window_new (NULL, db, dir);
+  gtk_window_set_default_size (GTK_WINDOW (win), 800, 600); /* a small window */
+  gtk_window_present (GTK_WINDOW (win));
+  pump (100);
+  JnClockBar *b = jn_window_clock_bar (win);
+  Clock k = { 0 };
+  jn_clock_bar_set_now_func (b, fake_now, &k);
+
+  /* Nothing to study on yet. */
+  g_assert_false (gtk_widget_is_sensitive (GTK_WIDGET (b)));
+  jn_window_add_subject (win, "DSA");
+  gint64 heaps = jn_window_add_topic (win, "Heaps");
+  g_assert_true (gtk_widget_is_sensitive (GTK_WIDGET (b)));
+  g_assert_nonnull (strstr (jn_window_studied (win), "no time"));
+  page_fits (win);
+
+  jn_clock_bar_toggle (b);
+  at (&k, b, 125);
+  jn_window_add_topic (win, "Graphs"); /* opens it, with the clock running */
+  gint64 graphs = jn_window_topic (win);
+  g_assert_cmpint (jn_db_studied (db, heaps, 0), ==, 125);
+  g_assert_true (jn_clock_bar_running (b));
+  at (&k, b, 155);
+  jn_window_open_topic (win, heaps);
+  g_assert_cmpint (jn_db_studied (db, graphs, 0), ==, 30);
+  g_assert_cmpint (jn_db_studied (db, heaps, midnight_today ()), ==, 125);
+  g_assert_nonnull (strstr (jn_window_studied (win), "Today 2 min"));
+
+  /* The timer's end is said in the status line. */
+  jn_clock_bar_pause (b);
+  jn_clock_bar_set_minutes (b, 1);
+  jn_clock_bar_set_mode (b, JN_CLOCK_TIMER);
+  jn_clock_bar_toggle (b);
+  at (&k, b, 300);
+  g_assert_nonnull (strstr (jn_window_status (win), "Time's up"));
+  page_fits (win); /* the timer shows its minutes too */
+  g_assert_cmpint (jn_db_studied (db, heaps, 0), ==, 185);
+  g_assert_nonnull (strstr (jn_window_studied (win), "Today 3 min"));
+
+  /* Closing Notes keeps what ran. */
+  jn_clock_bar_toggle (b);
+  at (&k, b, 320);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+  db = jn_db_open (path, NULL);
+  g_assert_cmpint (jn_db_studied (db, heaps, 0), ==, 205);
+  jn_db_close (db);
+  g_remove (path);
+  g_rmdir (dir);
+  gtk_style_context_remove_provider_for_display (gdk_display_get_default (), GTK_STYLE_PROVIDER (css));
+  g_object_unref (css);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -789,5 +995,7 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/window-flow", test_window_flow);
   g_test_add_func ("/notes-ui/enhance", test_enhance);
   g_test_add_func ("/notes-ui/md-view", test_md_view);
+  g_test_add_func ("/notes-ui/clock-bar", test_clock_bar);
+  g_test_add_func ("/notes-ui/study-clock", test_study_clock);
   return g_test_run ();
 }
