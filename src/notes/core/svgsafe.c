@@ -43,10 +43,9 @@ value_safe (const char *name, const char *value)
     return FALSE;
   if (g_strrstr (value, "javascript:") != NULL)
     return FALSE;
-  const char *u = strstr (value, "url(");
-  if (u != NULL)
+  /* Only references inside this drawing: url(#id), every one of them. */
+  for (const char *u = strstr (value, "url("); u != NULL; u = strstr (u + 4, "url("))
     {
-      /* Only a reference inside this drawing: url(#id). */
       if (u[4] != '#')
         return FALSE;
       for (const char *p = u + 5; *p != ')'; p++)
@@ -77,6 +76,12 @@ start (GMarkupParseContext *ctx, const char *name, const char **anames, const ch
       g_set_error_literal (error, G_MARKUP_ERROR, G_MARKUP_ERROR_INVALID_CONTENT, "too large");
       return;
     }
+  if (c->depth == 1 && c->root_seen)
+    {
+      /* GMarkup reads on after the root; XML has only one. */
+      g_set_error_literal (error, G_MARKUP_ERROR, G_MARKUP_ERROR_INVALID_CONTENT, "second root");
+      return;
+    }
   if (!c->root_seen)
     {
       c->root_seen = TRUE;
@@ -97,7 +102,8 @@ start (GMarkupParseContext *ctx, const char *name, const char **anames, const ch
     {
       g_string_append_printf (c->out, "<%s", name);
       for (int i = 0; anames[i] != NULL; i++)
-        if (g_strv_contains (ATTRIBUTES, anames[i]) && value_safe (anames[i], avalues[i]))
+        if (g_strv_contains (ATTRIBUTES, anames[i]) && value_safe (anames[i], avalues[i]) &&
+            !g_strv_contains ((const char *const *) anames + i + 1, anames[i])) /* XML allows each once: the last */
           {
             g_autofree char *v = g_markup_escape_text (avalues[i], -1);
             g_string_append_printf (c->out, " %s=\"%s\"", anames[i], v);

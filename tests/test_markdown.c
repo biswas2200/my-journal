@@ -67,6 +67,7 @@ static const BlockCase block_cases[] = {
   { "only blanks",        "\n\n",                               "" },
   { "trailing spaces kept out", "## Idea   ",                    "h2:Idea" },
   { "windows line ends",  "# A\r\n- b\r\n",                     "h1:A | ul0:b" },
+  { "broken UTF-8 replaced (fuzzing)", "- a\xf0\n\xe2\x86", "ul0:a\xef\xbf\xbd | p0:\xef\xbf\xbd\xef\xbf\xbd" },
 };
 
 static void
@@ -135,6 +136,8 @@ static const SpanCase span_cases[] = {
   { "math braces",        "$x^{2} + y_{i}$",              "c[x^2 + y_i]" },
   { "prices are not math","costs $5 and $6 each",         "t[costs $5 and $6 each]" },
   { "lone dollar",        "a $ b",                        "t[a $ b]" },
+  { "math of only braces (fuzzing)", "a $}}$ b",          "t[a  b]" },
+  { "broken UTF-8 at the end (fuzzing)", "**\xf0",       "t[**\xef\xbf\xbd]" },
 };
 
 static void
@@ -203,6 +206,34 @@ test_hidden (void)
   jr_cases_done (&c);
 }
 
+/* Unclosed marks make each one look to the end of the line: the AI's
+ * longest answer (about 130 KB) in one line of them still reads fast,
+ * and a line over 16 KB keeps all its text, unformatted. */
+static void
+test_long_lines (void)
+{
+  static const char *marks[] = { "[x](", "[", "`a", "_a", "<https://", "**a" };
+  for (gsize i = 0; i < G_N_ELEMENTS (marks); i++)
+    for (gsize size = 16 * 1024 - 8; size <= 160 * 1024; size += 144 * 1024)
+      {
+        GString *s = g_string_new (NULL);
+        while (s->len < size)
+          g_string_append (s, marks[i]);
+        gint64 t0 = g_get_monotonic_time ();
+        g_autoptr (GPtrArray) blocks = jn_md_blocks (s->str);
+        g_autoptr (GPtrArray) spans = jn_md_spans (((JnMdBlock *) blocks->pdata[0])->text);
+        /* A fraction of a second here; 10 s leaves room for Valgrind and
+         * still catches the square, which took seconds before the limit. */
+        g_assert_cmpint (g_get_monotonic_time () - t0, <, 10 * G_USEC_PER_SEC);
+        if (size > 16 * 1024)
+          {
+            g_assert_cmpuint (spans->len, ==, 1);
+            g_assert_cmpstr (((JnMdSpan *) spans->pdata[0])->text, ==, g_strstrip (s->str));
+          }
+        g_string_free (s, TRUE);
+      }
+}
+
 int
 main (int argc, char **argv)
 {
@@ -210,5 +241,6 @@ main (int argc, char **argv)
   g_test_add_func ("/markdown/blocks", test_blocks);
   g_test_add_func ("/markdown/spans", test_spans);
   g_test_add_func ("/markdown/hidden", test_hidden);
+  g_test_add_func ("/markdown/long-lines", test_long_lines);
   return g_test_run ();
 }

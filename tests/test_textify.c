@@ -104,6 +104,20 @@ test_huge (void)
   g_string_free (s, TRUE);
 }
 
+/* A page is bytes from the network, with no zero after them: nothing
+ * past its length is read (found by fuzzing; ASan and Valgrind see it). */
+static void
+test_no_zero_at_end (void)
+{
+  static const char page[] = "<p>prefix sums</p>";
+  gsize n = sizeof page - 1;
+  char *bytes = g_malloc (n);
+  memcpy (bytes, page, n);
+  g_autofree char *got = jn_textify (bytes, n, 100);
+  g_assert_cmpstr (got, ==, "prefix sums");
+  g_free (bytes);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -111,5 +125,6 @@ main (int argc, char **argv)
   g_test_add_func ("/textify/table", test_table);
   g_test_add_func ("/textify/hidden", test_hidden);
   g_test_add_func ("/textify/huge", test_huge);
+  g_test_add_func ("/textify/no-zero-at-end", test_no_zero_at_end);
   return g_test_run ();
 }

@@ -368,9 +368,12 @@ persisted across restarts). The manual checklist is in
 
 ## Quality checks
 
-| Check | Result (28 Oct 2026) | How |
+A plain summary of what protects your writing, what was tested and
+what only you can check is in [REPORT.md](REPORT.md).
+
+| Check | Result (30 Oct 2026) | How |
 | --- | --- | --- |
-| Unit, UI and integration tests | 32 suites, all pass | `meson test -C build` |
+| Unit, UI and integration tests | 40 suites, all pass | `meson test -C build` |
 | Network jail: every non-local socket family, random and 64-bit domains, a real TCP listener that must receive nothing, io_uring, x32, threads, child programs | all refused | `tests/test_netjail.c` |
 | AppArmor profile, probed from outside without the jail | TCP, UDP, IPv6, DNS via resolved and the link portal refused | `tools/check-apparmor.sh` |
 | Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |
@@ -379,7 +382,7 @@ persisted across restarts). The manual checklist is in
 | Valgrind memcheck | 0 errors, 0 leaks | see Tests |
 | Line coverage | 89.2% overall (Journal, Notes and the start screen) | `tools/coverage.sh` |
 | Compiler warnings | `-Wall -Wextra -Werror`, none | every build |
-| Fuzzing (libFuzzer + ASan + UBSan on GitHub, 5 targets) | 1 bug found and fixed (a damaged file could hand the calendar a missing day) | [`fuzz/README.md`](fuzz/README.md) |
+| Fuzzing (libFuzzer + ASan + UBSan on GitHub, 10 targets: 5 Journal, 5 Notes) | 7 bugs found and fixed: a damaged file could hand the calendar a missing day; in Notes, a one-byte over-read of every fetched page, a second `url()` or a second root in an AI diagram not checked, broken UTF-8 read past its end, broken JSON that could abort Notes, and a long line of unclosed Markdown marks taking seconds | [`fuzz/README.md`](fuzz/README.md) |
 
 What a crash can and cannot lose: entries are saved about a second
 after you stop typing, and on blur, lock and quit. SQLite runs with

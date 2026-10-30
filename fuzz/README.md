@@ -6,7 +6,9 @@ memory errors (AddressSanitizer), undefined behaviour (UBSan), leaks,
 hangs and broken promises (`FUZZ_CHECK`).
 
 Every target reads input that does not come from this program: text the
-user types, or a journal file that may be damaged.
+user types, a journal file that may be damaged, or, on the Notes side,
+what comes from the internet: web pages, Gemini's answers, and the
+Markdown and SVG diagrams the AI writes after reading those pages.
 
 | Target | Input | Checked beyond "no crash" |
 | --- | --- | --- |
@@ -15,6 +17,11 @@ user types, or a journal file that may be damaged.
 | `lockout` | the saved wrong-try state | in range; saves and reads back the same; never more than one 30 s wait |
 | `secrets` | PINs, passphrases and recovery keys as typed; saved keys, wrapped keys and sealed entries | only one proper form comes out; a refused recovery key leaves nothing behind; forged entries never open |
 | `journal_file` | a whole journal file | opens, shows, unlocks, changes and saves without crashing; the state it reports is possible; no NULL day or month reaches the screens |
+| `markdown` | the AI's enhanced copy, a topic reference | sane kinds and levels; no empty span; only http(s) links; citations are only numbers; all text valid UTF-8; a line without markup shown as written |
+| `svgsafe` | the AI's SVG diagram | the result is read again by separate rules: `<svg>` root of size 4000 at most; no script, style, link, image, `<use>` or embedded document; no handler, href or style attribute; only `url(#id)`; cleaning it again changes nothing |
+| `textify` | a fetched web page (any bytes) and a length limit | valid UTF-8, no control characters but newline and tab; a limit gives the start of the same text, cut on a character boundary |
+| `aiproto` | Gemini's answer, the sign-in token answer, the ADC file, the messages between Notes and its AI helper | text that comes out is valid UTF-8; errors never hold the refresh token; a request or answer written and read again comes back the same |
+| `noteline` | the lines of a stored note | any line stored as any kind reads back as that kind and text; any stored line reads as a kind and stays it |
 
 ## On GitHub
 
@@ -64,6 +71,36 @@ build/fuzz/make_seeds fuzz/corpus/journal_file fuzz/corpus/secrets
 The other seeds are small text files.
 
 ## Found so far
+
+Notes (each input is in `corpus/<target>/` and a named case in the
+unit tests):
+
+- `textify`: read one byte past the end of every page, which comes
+  from the network with no zero byte after it
+  (`crash-overread-one-byte.bin`).
+- `svgsafe`: only the first `url(` in a value was checked, so
+  `fill="url(#g) url(https://…)"` kept a reference to another site
+  (`crash-second-url-not-checked.svg`).
+- `markdown`: a line ending in a broken UTF-8 character was read past
+  its end; broken UTF-8 now becomes U+FFFD first
+  (`crash-overread-broken-utf8.bin`).
+- `aiproto`: json-glib's immutable parser aborts the whole program on
+  some broken JSON (`null{…}`); a bad answer could have closed Notes.
+  The normal parser is used now (`crash-json-glib-immutable-abort.json`).
+- `svgsafe`, after five minutes: GMarkup reads on after the root
+  element, so a second `<svg>` escaped the size limit; and an attribute
+  given twice was written twice, which XML readers refuse. A second
+  root is refused now, and a repeated attribute kept once
+  (`crash-second-root-and-repeated-attributes.svg`).
+- `markdown`, while writing these targets: a long line of unclosed
+  marks (`[x](` 50,000 times) took 3.7 s to read, since each mark looks
+  for its end to the end of the line; a paragraph over 16 KB is now
+  shown unformatted, which takes milliseconds
+  (`tests/test_markdown.c`, `/markdown/long-lines`).
+- `markdown`, small: math of only braces (`$}}$`) came out as an empty
+  span (`crash-empty-math-span.md`).
+
+Journal:
 
 - `journal_file`: a damaged index made the calendar query return a row
   with no day, so the day list was handed NULL (the month list would

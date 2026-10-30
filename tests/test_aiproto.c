@@ -220,6 +220,7 @@ test_response (void)
     { "quota",     "{\"error\":{\"code\":429,\"message\":\"Resource exhausted\",\"status\":\"RESOURCE_EXHAUSTED\"}}",
                    429, NULL, "try again" },
     { "not JSON",  "<html>gateway</html>", 502, NULL, "502" },
+    { "JSON that made json-glib abort (fuzzing)", "null{\"candidates\":[]}", 200, NULL, "HTTP 200" },
   };
   JrCases c = { "response", 0, 0 };
   for (gsize i = 0; i < G_N_ELEMENTS (t); i++)

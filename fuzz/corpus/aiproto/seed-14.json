@@ -1,0 +1,1 @@
+{"markdown": "## Idea\n- x [1]", "model": "gemini-3.8-flash", "sources": [{"url": "https://example.org/a"}, {"url": "https://example.org/b", "problem": "could not be read"}, {"problem": "no url"}, 3]}

@@ -5,6 +5,10 @@
 
 #define ARROW "\xe2\x86\x92"
 #define MAX_DEPTH 4
+/* Finding where a mark closes looks ahead, so a long run of unclosed
+ * marks costs the square of its length: a paragraph longer than this is
+ * shown as plain text (no real one is; a page could ask the AI for one). */
+#define MAX_SPAN_TEXT (16 * 1024)
 
 static void
 block_free (gpointer p)
@@ -65,7 +69,9 @@ GPtrArray *
 jn_md_blocks (const char *markdown)
 {
   GPtrArray *out = g_ptr_array_new_with_free_func (block_free);
-  g_auto (GStrv) lines = g_strsplit (markdown != NULL ? markdown : "", "\n", -1);
+  /* Broken UTF-8 (a damaged file) shows as U+FFFD, never read past. */
+  g_autofree char *valid = g_utf8_make_valid (markdown != NULL ? markdown : "", -1);
+  g_auto (GStrv) lines = g_strsplit (valid, "\n", -1);
   gboolean fence = FALSE;
   char fence_char = 0;
   int fence_indent = 0, fence_lines = 0;
@@ -214,8 +220,8 @@ span_free (gpointer p)
 static void
 push (GPtrArray *out, JnMdSpanKind kind, const char *text, gssize len, const char *url)
 {
-  if (len == 0)
-    return;
+  if (len == 0 || (len < 0 && *text == '\0'))
+    return; /* $}$ is math of nothing */
   JnMdSpan *last = out->len > 0 ? out->pdata[out->len - 1] : NULL;
   if (kind == JN_SPAN_TEXT && last != NULL && last->kind == JN_SPAN_TEXT)
     {
@@ -321,8 +327,14 @@ GPtrArray *
 jn_md_spans (const char *text)
 {
   GPtrArray *out = g_ptr_array_new_with_free_func (span_free);
-  const char *s = text != NULL ? text : "";
+  g_autofree char *valid = g_utf8_make_valid (text != NULL ? text : "", -1);
+  const char *s = valid;
   const char *p = s;
+  if (strlen (s) > MAX_SPAN_TEXT)
+    {
+      push (out, JN_SPAN_TEXT, s, -1, NULL);
+      return out;
+    }
   while (*p != '\0')
     {
       if (*p == '\\' && p[1] != '\0' && g_ascii_ispunct (p[1]))

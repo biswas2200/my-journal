@@ -5,8 +5,9 @@
  * gradients, with their geometry and paint attributes. Removed: scripts,
  * event handlers, links (their text stays), images, embedded documents,
  * <use>, style sheets and style attributes, url() other than "#id".
- * Refused outright: a DOCTYPE or unknown entity, a root that is not
- * <svg>, a size over 4000, more than 2000 elements, nesting over 64 deep,
+ * An attribute given twice is kept once (the last). Refused outright: a
+ * DOCTYPE or unknown entity, a root that is not <svg> or a second root,
+ * a size over 4000, more than 2000 elements, nesting over 64 deep,
  * input over 256 KB. The result is re-written, escaped XML. */
 #pragma once
 

@@ -3,7 +3,10 @@
  * A target is one function, LLVMFuzzerTestOneInput, that takes any bytes
  * and must never crash, leak, hang or break one of its FUZZ_CHECKs. With
  * clang it is linked to libFuzzer; with GCC to replay.c, which runs the
- * saved inputs as a normal test. */
+ * saved inputs as a normal test.
+ *
+ * Notes targets define FUZZ_NOTES first: they link nothing of the
+ * Journal, so there is no crypto to start. */
 #pragma once
 
 #include <stddef.h>
@@ -11,7 +14,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <glib.h>
+#ifndef FUZZ_NOTES
 #include "vault.h"
+#endif
 
 int LLVMFuzzerTestOneInput (const uint8_t *data, size_t size);
 
@@ -42,8 +47,10 @@ fuzz_setup (void)
   if (done)
     return;
   done = TRUE;
+#ifndef FUZZ_NOTES
   if (!jr_crypto_init ())
     abort ();
+#endif
   g_log_set_always_fatal (G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
   g_log_set_handler (G_LOG_DOMAIN, G_LOG_LEVEL_WARNING | G_LOG_LEVEL_MESSAGE, fuzz_quiet, NULL);
 }

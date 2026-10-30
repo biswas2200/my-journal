@@ -113,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [date, text, lockout, secrets, journal_file]
+        target: [date, text, lockout, secrets, journal_file, markdown, svgsafe, noteline, textify, aiproto]
     steps:
       - uses: actions/checkout@v7
 

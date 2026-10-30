@@ -1,0 +1,1 @@
+<!DOCTYPE svg [<!ENTITY x "y">]><svg>&x;</svg>

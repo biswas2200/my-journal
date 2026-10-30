@@ -12,7 +12,9 @@
 static JsonObject *
 parse_object (const char *json, gssize len, JsonParser **parser)
 {
-  *parser = json_parser_new_immutable ();
+  /* Not json_parser_new_immutable (): with it, json-glib 1.10 aborts
+   * the program on some broken input ("null{"), found by fuzzing. */
+  *parser = json_parser_new ();
   if (json == NULL || !json_parser_load_from_data (*parser, json, len, NULL))
     return NULL;
   JsonNode *root = json_parser_get_root (*parser);

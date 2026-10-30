@@ -4,7 +4,10 @@
  * Forgiving by design: a code fence inside a list item, an unclosed
  * fence, odd indents or stray markup never fail; whatever is not markup
  * comes out as text, so nothing written is ever lost. Only http and
- * https addresses become links; any other link shows as written. */
+ * https addresses become links; any other link shows as written. Any
+ * bytes are fine: broken UTF-8 comes out as U+FFFD. Spans of a text
+ * over 16 KB are one plain text span, so reading takes little time
+ * whatever the AI wrote. */
 #pragma once
 
 #include <glib.h>

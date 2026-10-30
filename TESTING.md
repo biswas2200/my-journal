@@ -121,10 +121,12 @@ build/tests/test_jdate --verbose
 
 ### Fuzzing
 
-Five fuzz targets ([`fuzz/`](fuzz/README.md)) take input that does not
-come from this program: typed dates, any text, the saved wrong-try
-state, typed secrets and saved keys, and whole (possibly damaged)
-journal files. On GitHub each runs for two minutes per push under
+Ten fuzz targets ([`fuzz/`](fuzz/README.md)) take input that does not
+come from this program. Journal: typed dates, any text, the saved
+wrong-try state, typed secrets and saved keys, and whole (possibly
+damaged) journal files. Notes: fetched web pages, Gemini's answers and
+the sign-in files, the messages between Notes and its AI helper, the
+AI's Markdown and SVG diagrams, and stored note lines. On GitHub each runs for two minutes per push under
 libFuzzer with AddressSanitizer and UBSan, keeping what it learns
 between runs. Every normal test run replays the seeds and every input
 that ever found a bug (`meson test -C build --suite fuzz`).
