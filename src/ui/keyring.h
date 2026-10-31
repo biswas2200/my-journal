@@ -7,4 +7,5 @@
 
 #include "journal.h"
 
+/* The store the window gives the journal for a PIN's device secret. */
 const JrDeviceStore *jr_keyring_store (void);

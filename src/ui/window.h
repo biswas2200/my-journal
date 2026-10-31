@@ -27,6 +27,7 @@ typedef void (*JrLeaveFunc) (int code, gpointer user);
 JrWindow  *jr_window_new              (GtkApplication *app, JrJournal *journal);
 JrJournal *jr_window_get_journal      (JrWindow *win);
 
+/* Switches the screen to today, a past day, Activity or Lock & security. */
 void       jr_window_show_today       (JrWindow *win);
 void       jr_window_show_day         (JrWindow *win, JrDay day);
 /* Same, from an idle callback: safe inside a handler of the old screen. */
@@ -59,4 +60,5 @@ void       jr_window_leave            (JrWindow *win, int code);
 /* The day screen if it is showing, else NULL (used by tests). */
 struct _JrDayView *jr_window_get_day_view (JrWindow *win);
 
+/* Unix seconds now, from the system clock. */
 gint64     jr_now                     (void);

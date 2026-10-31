@@ -67,5 +67,6 @@ typedef struct {
   gint64 expires_in; /* seconds, 0 to a day */
 } JnOAuthTokens;
 
+/* FALSE with an error in plain words (never holding a token). */
 gboolean jn_oauth_parse_tokens   (const char *json, gssize len, int status, JnOAuthTokens *out, GError **error);
 void     jn_oauth_tokens_clear   (JnOAuthTokens *t);

@@ -26,6 +26,8 @@ JnWindow *jn_window_new            (GtkApplication *app, JnDb *db, const char *e
 void      jn_window_set_navigation (JnWindow *win, JnLeaveFunc leave, gpointer user);
 void      jn_window_leave          (JnWindow *win, int code);
 
+/* New subject or topic (the topic in the selected subject, opened);
+ * 0 when the name is empty or taken. */
 gint64    jn_window_add_subject    (JnWindow *win, const char *name);
 /* In the selected subject (or the open topic's). */
 gint64    jn_window_add_topic      (JnWindow *win, const char *name);
@@ -81,6 +83,7 @@ const char *jn_window_rescue_path  (JnWindow *win);
 /* The status line's text (for tests). */
 const char *jn_window_status       (JnWindow *win);
 
+/* What is open, for tests and the program around the window. */
 gint64    jn_window_topic          (JnWindow *win);
 gint64    jn_window_session        (JnWindow *win); /* 0 until the first keystroke */
 JnEditor *jn_window_editor         (JnWindow *win);

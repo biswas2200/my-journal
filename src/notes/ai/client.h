@@ -37,4 +37,5 @@ typedef struct {
   gsize       n_ports;
 } JnGeminiConfig;
 
+/* The real enhancer: Gemini on Vertex AI through journal-ai. */
 JnEnhancer *jn_gemini_enhancer_new (const JnGeminiConfig *config);

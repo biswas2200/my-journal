@@ -160,6 +160,7 @@ JrJobResult    jr_journal_disable_lock       (JrJournal *j, const char *current,
 char          *jr_journal_new_recovery_key   (JrJournal *j, const char *current, gint64 now,
                                               JrJobResult *result);
 
+/* Whether the journal locks when the laptop sleeps (kept in the file). */
 gboolean       jr_journal_lock_on_sleep      (JrJournal *j);
 void           jr_journal_set_lock_on_sleep  (JrJournal *j, gboolean on);
 

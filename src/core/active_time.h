@@ -27,9 +27,14 @@ typedef struct {
   gpointer    user;
 } JrActiveTimer;
 
+/* Starts counting from nothing; `flush` gets the counted seconds. */
 void   jr_active_timer_init            (JrActiveTimer *t, JrFlushFunc flush, gpointer user);
+/* An edit at `now`: the next 60 seconds count as active. */
 void   jr_active_timer_keystroke       (JrActiveTimer *t, gint64 now);
+/* Once a second: counts it if active, flushes every 15 s and when the
+ * day changes. */
 void   jr_active_timer_tick            (JrActiveTimer *t, gint64 now);
+/* Hands the counted seconds to the flush callback now. */
 void   jr_active_timer_flush           (JrActiveTimer *t);
 /* Flushes and forgets activity and session time (used on lock). */
 void   jr_active_timer_stop            (JrActiveTimer *t);

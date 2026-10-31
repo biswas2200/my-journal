@@ -42,14 +42,18 @@ typedef enum {
 } JrLockKind;
 #define JR_RECOVERY_NORM_LEN 25 /* 24 symbols + NUL */
 
+/* Starts libsodium; call once before anything below. FALSE: do not go on. */
 gboolean jr_crypto_init        (void);
 
+/* Exactly six ASCII digits. */
 gboolean jr_pin_valid          (const char *pin);
 /* Checks a PIN or passphrase and returns the form used for key derivation
  * (passphrases are Unicode-normalized, NFC), or NULL if it is not allowed.
  * Free with jr_secret_free. */
 char    *jr_lock_secret_normalize (JrLockKind kind, const char *secret);
 
+/* A random 32-byte data key in locked, non-swappable memory (sodium_malloc);
+ * free wipes it. equal compares in constant time. */
 JrKey   *jr_key_generate       (void);
 void     jr_key_free           (JrKey *key);
 gboolean jr_key_equal          (const JrKey *a, const JrKey *b);

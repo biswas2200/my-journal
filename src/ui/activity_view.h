@@ -6,4 +6,5 @@
 #include <gtk/gtk.h>
 #include "window.h"
 
+/* The screen, and its header bar in *header_out (the window shows it). */
 GtkWidget *jr_activity_view_new (JrWindow *win, GtkWidget **header_out);

@@ -9,6 +9,7 @@
 #define JR_TYPE_BAR_CHART (jr_bar_chart_get_type ())
 G_DECLARE_FINAL_TYPE (JrBarChart, jr_bar_chart, JR, BAR_CHART, GtkWidget)
 
+/* An empty chart: seven bars at zero. */
 GtkWidget *jr_bar_chart_new (void);
 /* `labels` are copied (short weekday names). `highlight` is drawn white. */
 void       jr_bar_chart_set (JrBarChart *chart, const int minutes[JR_BAR_CHART_BARS],

@@ -14,6 +14,8 @@
 #define JN_TYPE_MD_VIEW (jn_md_view_get_type ())
 G_DECLARE_FINAL_TYPE (JnMdView, jn_md_view, JN, MD_VIEW, GtkTextView)
 
+/* Shows `markdown` formatted (replacing what was there); get returns it
+ * as given. */
 GtkWidget  *jn_md_view_new          (void);
 void        jn_md_view_set_markdown (JnMdView *v, const char *markdown);
 const char *jn_md_view_get_markdown (JnMdView *v);

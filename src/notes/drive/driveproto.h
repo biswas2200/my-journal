@@ -48,6 +48,8 @@ typedef struct {
   gsize        n_items;
 } JnDriveRequest;
 
+/* As JSON for the helper's stdin, and back: anything that is not a whole,
+ * valid request is refused (and nothing is left allocated). */
 char    *jn_drive_request_to_json   (const JnDriveRequest *r);
 /* Strings in `out` are newly allocated: free with jn_drive_request_clear. */
 gboolean jn_drive_request_from_json (const char *json, gssize len, JnDriveRequest *out, GError **error);
@@ -71,6 +73,7 @@ typedef struct {
   gsize          n_results;
 } JnDriveAnswer;
 
+/* The helper's answer as JSON for its stdout, and back. */
 char    *jn_drive_answer_to_json   (const JnDriveAnswer *a);
 gboolean jn_drive_answer_from_json (const char *json, gssize len, JnDriveAnswer *out, GError **error);
 void     jn_drive_answer_clear     (JnDriveAnswer *a);

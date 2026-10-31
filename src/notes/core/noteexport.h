@@ -33,6 +33,7 @@ char     *jn_export_file_name   (const char *topic);
  * language, from xdg-user-dirs). */
 char     *jn_export_dir         (void);
 
+/* A topic's export: its title and subject, then sessions added below. */
 JnExport *jn_export_new         (const char *subject, const char *topic);
 /* "Time studied: 3 h 10 min" under the subject; before any session.
  * Nothing for no time. */

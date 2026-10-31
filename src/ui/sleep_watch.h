@@ -12,6 +12,8 @@
 typedef struct JrSleepWatch JrSleepWatch;
 typedef void (*JrSleepFunc) (gpointer user);
 
+/* Calls `before_sleep` when logind says the system is about to sleep,
+ * while enabled (it then also holds the delay inhibitor); free stops it. */
 JrSleepWatch *jr_sleep_watch_new         (JrSleepFunc before_sleep, gpointer user);
 void          jr_sleep_watch_set_enabled (JrSleepWatch *w, gboolean enabled);
 void          jr_sleep_watch_free        (JrSleepWatch *w);

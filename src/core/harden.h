@@ -8,4 +8,6 @@
 
 #include <glib.h>
 
+/* Not dumpable, no core files. FALSE if the kernel refused (the caller
+ * decides whether to go on). */
 gboolean jr_harden_process (void);

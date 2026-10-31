@@ -14,6 +14,8 @@
 #define JR_TYPE_DAY_VIEW (jr_day_view_get_type ())
 G_DECLARE_FINAL_TYPE (JrDayView, jr_day_view, JR, DAY_VIEW, GtkBox)
 
+/* The screen for `day` (today: writing; another day: read-only with
+ * Edit), and its header bar in *header_out. */
 JrDayView *jr_day_view_new              (JrWindow *win, JrDay day, GtkWidget **header_out);
 /* Writes every changed block now. */
 void       jr_day_view_save             (JrDayView *view);

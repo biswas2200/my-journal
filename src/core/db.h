@@ -18,6 +18,7 @@ typedef struct JrDb JrDb;
 JrDb    *jr_db_open             (const char *path, GError **error);
 void     jr_db_close            (JrDb *db);
 
+/* One transaction around several writes: all of them or none. */
 gboolean jr_db_begin            (JrDb *db);
 gboolean jr_db_commit           (JrDb *db);
 void     jr_db_rollback         (JrDb *db);

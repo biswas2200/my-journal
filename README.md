@@ -545,6 +545,9 @@ C/C++ support, or SonarQube for IDE in VS Code with
 
 ## Layout
 
+How the parts fit, the rules the code keeps, how to test and release:
+[docs/DEVELOPING.md](docs/DEVELOPING.md).
+
 ```
 src/launcher/ `journal`: the start screen; runs one program at a time
 src/diary/    `journal-diary`: the Journal's main(), in the network jail

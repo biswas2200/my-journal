@@ -26,6 +26,7 @@
 #define JN_TYPE_EDITOR (jn_editor_get_type ())
 G_DECLARE_FINAL_TYPE (JnEditor, jn_editor, JN, EDITOR, GtkBox)
 
+/* An empty editor: the note, its toolbar, and the Sources box. */
 GtkWidget   *jn_editor_new           (void);
 /* Replaces everything; not undoable, emits no "changed". */
 void         jn_editor_load          (JnEditor *e, const char *body, const char *sources);

@@ -72,6 +72,8 @@ typedef struct {
   JnAiInput  input;                  /* sources are filled in by the helper */
 } JnAiRequest;
 
+/* The request as JSON for the helper's stdin, and back (refusing anything
+ * that is not a whole, valid request). */
 char    *jn_ai_request_to_json   (const JnAiRequest *r);
 /* Strings in `out` are newly allocated: free them with jn_ai_request_clear. */
 gboolean jn_ai_request_from_json (const char *json, gssize len, JnAiRequest *out, GError **error);
@@ -84,6 +86,7 @@ typedef struct {
   gsize       n_sources;
 } JnAiAnswer;
 
+/* The helper's answer as JSON for its stdout, and back. */
 char    *jn_ai_answer_to_json    (const char *markdown, const char *model, const JnAiSource *sources,
                                   gsize n_sources, const char *error);
 gboolean jn_ai_answer_from_json  (const char *json, gssize len, JnAiAnswer *out, GError **error);

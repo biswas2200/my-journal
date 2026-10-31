@@ -29,6 +29,7 @@ typedef struct {
 
 #define JN_TIMER_MAX_MINUTES 600 /* ten hours */
 
+/* A clock at zero, stopped; a timer starts at 25 minutes. */
 void      jn_clock_init           (JnClock *c, JnClockMode mode);
 /* Makes it a stopped timer of `seconds` (1 s to JN_TIMER_MAX_MINUTES),
  * clamped into that range; what was not taken is forgotten. */

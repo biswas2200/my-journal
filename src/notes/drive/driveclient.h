@@ -60,6 +60,7 @@ typedef struct {
   gpointer      open_user;
 } JnBackupConfig;
 
+/* The real backup: Google's sign-in and Drive, through journal-drive. */
 JnBackup *jn_google_backup_new (const JnBackupConfig *config);
 
 /* ~/.config/journal-notes/google-client.json: where the "Desktop app"

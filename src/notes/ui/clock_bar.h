@@ -22,6 +22,7 @@ G_DECLARE_FINAL_TYPE (JnClockBar, jn_clock_bar, JN, CLOCK_BAR, GtkBox)
 
 typedef gint64 (*JnNowFunc) (gpointer user);
 
+/* A stopwatch at 0:00, stopped. */
 GtkWidget   *jn_clock_bar_new          (void);
 /* Start, or pause; a finished timer starts again from the top. */
 void         jn_clock_bar_toggle       (JnClockBar *b);

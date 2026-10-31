@@ -23,6 +23,7 @@ typedef struct {
   int    pin_failed; /* wrong PINs since the last right or new one */
 } JrLockout;
 
+/* Waiting after 5 wrong passphrases (TRUE while now < until). */
 gboolean jr_lockout_active         (const JrLockout *l, gint64 now);
 /* Whole seconds left to wait, 0 when not waiting. */
 gint64   jr_lockout_remaining      (const JrLockout *l, gint64 now);
@@ -33,6 +34,7 @@ void     jr_lockout_fail           (JrLockout *l, gint64 now);
  * blocked PIN). */
 void     jr_lockout_success        (JrLockout *l);
 
+/* 5 wrong PINs: blocked until the journal is opened another way. */
 gboolean jr_lockout_pin_blocked    (const JrLockout *l);
 int      jr_lockout_pin_tries_left (const JrLockout *l);
 /* Records a wrong PIN. Ignored once blocked. */

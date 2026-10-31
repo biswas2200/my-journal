@@ -4,6 +4,7 @@
 #include <gtk/gtk.h>
 #include "window.h"
 
+/* The screen, and its header bar in *header_out. */
 GtkWidget *jr_security_view_new (JrWindow *win, GtkWidget **header_out);
 
 /* Required steps after unlocking, before the journal shows: a new PIN

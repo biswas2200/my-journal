@@ -25,6 +25,8 @@ typedef struct {
 
 typedef void (*JrSecretDone) (GtkWindow *dialog, const char *const *secrets, gpointer user);
 
+/* A dialog over `parent` walking through `steps`; restart shows `error`
+ * and starts again from the first step. */
 GtkWindow *jr_secret_dialog_new      (JrWindow *parent, const char *title,
                                       const JrSecretStep *steps, int n_steps,
                                       JrSecretDone done, gpointer user);
