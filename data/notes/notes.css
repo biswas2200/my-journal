@@ -36,8 +36,11 @@ button.add:disabled, menubutton.add:disabled > button { color: #5C5C5C; }
 row.subject-row { padding: 8px 14px 4px 14px; font-weight: bold; color: #EDEDED; }
 row.topic-row { padding: 4px 14px 4px 28px; color: #CFCFCF; }
 row.session-row { padding: 3px 14px 3px 44px; color: #9B9B9B; font-size: 11px; }
-row.current { color: #FFFFFF; background: #1C2633; border-left: 2px solid #6C8EBF; }
-row:hover { background: #181818; }
+/* "current": the one row clicked last; "open": the page's subject and
+ * topic. Scoped like the transparent rule above, or that one wins. */
+.sidebar list > row.open { color: #FFFFFF; }
+.sidebar list > row:hover { background: #181818; }
+.sidebar list > row.current { color: #FFFFFF; background: #1C2633; border-left: 2px solid #6C8EBF; }
 .adds { margin: 10px; }
 
 .page-info { padding: 10px 28px 4px 28px; }

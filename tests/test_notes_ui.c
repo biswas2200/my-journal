@@ -1154,6 +1154,192 @@ test_backups (void)
   remove_tree (dir);
 }
 
+/* ---- the sidebar's highlight -------------------------------------------- */
+
+/* The sidebar rows (subject, topic, session, reference) carrying
+ * `css_class`, as their labels' text, top to bottom, joined by " | ". */
+static void
+collect_rows (GtkWidget *w, const char *css_class, GString *out, GtkWidget **first)
+{
+  if (GTK_IS_LIST_BOX_ROW (w) && gtk_widget_has_css_class (w, css_class))
+    {
+      GtkWidget *label = gtk_list_box_row_get_child (GTK_LIST_BOX_ROW (w));
+      if (out->len > 0)
+        g_string_append (out, " | ");
+      g_string_append (out, gtk_label_get_text (GTK_LABEL (label)));
+      if (first != NULL && *first == NULL)
+        *first = w;
+    }
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    collect_rows (c, css_class, out, first);
+}
+
+static char *
+rows_with (JnWindow *win, const char *css_class, GtkWidget **first)
+{
+  GString *out = g_string_new (NULL);
+  if (first != NULL)
+    *first = NULL;
+  collect_rows (GTK_WIDGET (win), css_class, out, first);
+  return g_string_free (out, FALSE);
+}
+
+/* The sidebar row whose label reads `text`. */
+static GtkWidget *
+find_row (GtkWidget *w, const char *text)
+{
+  if (GTK_IS_LIST_BOX_ROW (w))
+    {
+      GtkWidget *label = gtk_list_box_row_get_child (GTK_LIST_BOX_ROW (w));
+      if (GTK_IS_LABEL (label) && g_strcmp0 (gtk_label_get_text (GTK_LABEL (label)), text) == 0)
+        return w;
+    }
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    {
+      GtkWidget *found = find_row (c, text);
+      if (found != NULL)
+        return found;
+    }
+  return NULL;
+}
+
+/* A click on a sidebar row, as GTK delivers it. */
+static void
+click_row (JnWindow *win, const char *text)
+{
+  GtkWidget *r = find_row (GTK_WIDGET (win), text);
+  g_assert_nonnull (r);
+  g_signal_emit_by_name (gtk_widget_get_parent (r), "row-activated", r);
+  pump (50);
+}
+
+/* The colour 6 px into `w` (past the 2 px accent, before the text),
+ * halfway down, as GTK draws it with Notes' styles: the row drawn on
+ * its own, so no window offsets come into it. */
+static void
+colour_in (JnWindow *win, GtkWidget *w, guchar rgba[4])
+{
+  pump (100); /* laid out and drawn after the last change */
+  int width = gtk_widget_get_width (w), height = gtk_widget_get_height (w);
+  g_assert_cmpint (width, >, 6);
+  g_assert_cmpint (height, >, 0);
+  GdkPaintable *paintable = gtk_widget_paintable_new (w);
+  GskRenderNode *node = NULL;
+  /* Nothing to draw until the window has drawn its first frame. */
+  for (int tries = 0; node == NULL && tries < 50; tries++)
+    {
+      GtkSnapshot *snap = gtk_snapshot_new ();
+      gdk_paintable_snapshot (paintable, snap, width, height);
+      node = gtk_snapshot_free_to_node (snap);
+      if (node == NULL)
+        pump (20);
+    }
+  g_assert_nonnull (node);
+  GskRenderer *renderer = gtk_native_get_renderer (GTK_NATIVE (win));
+  GdkTexture *tex = gsk_renderer_render_texture (renderer, node, &GRAPHENE_RECT_INIT (0, 0, width, height));
+  gsize stride = (gsize) width * 4;
+  guchar *data = g_malloc (stride * (gsize) height);
+  gdk_texture_download (tex, data, stride); /* B, G, R, A per pixel */
+  const guchar *p = data + (gsize) (height / 2) * stride + 6 * 4;
+  rgba[0] = p[2];
+  rgba[1] = p[1];
+  rgba[2] = p[0];
+  rgba[3] = p[3];
+  g_free (data);
+  g_object_unref (tex);
+  gsk_render_node_unref (node);
+  g_object_unref (paintable);
+}
+
+/* Opaque and within a few steps of #RRGGBB. */
+static gboolean
+near (const guchar rgba[4], guint32 want)
+{
+  int r = (int) (want >> 16 & 0xff), g = (int) (want >> 8 & 0xff), b = (int) (want & 0xff);
+  return rgba[3] == 0xff && ABS (rgba[0] - r) <= 6 && ABS (rgba[1] - g) <= 6 && ABS (rgba[2] - b) <= 6;
+}
+
+/* Exactly one row is highlighted: the one clicked last, so a subject
+ * when it was picked (or nothing is open), else what is on the page (a
+ * session, "new session", the topic reference). The page's topic and
+ * subject are marked open. And the highlight shows on screen with
+ * Notes' own styles. */
+static void
+test_sidebar_highlight (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  JnDb *db = jn_db_open (path, NULL);
+  GtkCssProvider *css = gtk_css_provider_new ();
+  gtk_css_provider_load_from_resource (css, "/io/github/biswas2200/Journal/Notes/notes.css");
+  gtk_style_context_add_provider_for_display (gdk_display_get_default (), GTK_STYLE_PROVIDER (css),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  JnWindow *win = jn_window_new (NULL, db, dir);
+  gtk_window_set_default_size (GTK_WINDOW (win), 900, 600);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (100);
+  JnEditor *e = jn_window_editor (win);
+
+  static const struct { const char *step, *current, *open; } want[] = {
+    { "a subject, nothing open",  "DSA",         "" },
+    { "a topic, before typing",   "new session", "DSA | Heaps" },
+    { "after the first keystroke", NULL,         "DSA | Heaps" }, /* the session's time */
+    { "another topic clicked",    "new session", "DSA | Tries" },
+    { "the first topic again",    "new session", "DSA | Heaps" },
+    { "its session clicked",      NULL,          "DSA | Heaps" },
+    { "the subject clicked",      "DSA",         "Heaps" }, /* picked for + Topic; the page stays */
+  };
+  JrCases c = { "sidebar highlight", 0, 0 };
+  for (gsize i = 0; i < G_N_ELEMENTS (want); i++)
+    {
+      switch (i)
+        {
+        case 0: jn_window_add_subject (win, "DSA"); break;
+        case 1: jn_window_add_topic (win, "Tries"); jn_window_add_topic (win, "Heaps"); break;
+        case 2: jn_editor_focus (e); type (e, "- sift down"); pump (1300); break;
+        case 3: click_row (win, "Tries"); break;
+        case 4: click_row (win, "Heaps"); break;
+        case 5:
+          {
+            g_autofree char *spans = rows_with (win, "session-row", NULL);
+            g_auto (GStrv) each = g_strsplit (spans, " | ", -1);
+            click_row (win, each[0]); /* newest first: the one typed in */
+            break;
+          }
+        default: click_row (win, "DSA"); break;
+        }
+      GtkWidget *row = NULL;
+      g_autofree char *current = rows_with (win, "current", &row);
+      g_autofree char *open = rows_with (win, "open", NULL);
+      gboolean one = row != NULL && strstr (current, " | ") == NULL;
+      gboolean right = want[i].current != NULL ? g_strcmp0 (current, want[i].current) == 0
+                                               : gtk_widget_has_css_class (row, "session-row");
+      jr_case (&c, want[i].step, one && right && g_strcmp0 (open, want[i].open) == 0,
+               "Expected current \"%s\" open \"%s\"  Got current \"%s\" open \"%s\"",
+               want[i].current ? want[i].current : "<the session>", want[i].open, current, open);
+      if (row != NULL)
+        {
+          guchar rgba[4];
+          colour_in (win, row, rgba);
+          jr_case (&c, "the highlight shows", near (rgba, 0x1C2633), "%s: Expected #1C2633  Got #%02X%02X%02X%02X",
+                   want[i].step, rgba[0], rgba[1], rgba[2], rgba[3]);
+        }
+    }
+  /* A row that is not current draws nothing: the sidebar shows through. */
+  GtkWidget *tries = find_row (GTK_WIDGET (win), "Tries");
+  guchar rgba[4];
+  colour_in (win, tries, rgba);
+  jr_case (&c, "other rows plain", rgba[3] == 0, "Expected transparent  Got #%02X%02X%02X%02X", rgba[0], rgba[1],
+           rgba[2], rgba[3]);
+  jr_cases_done (&c);
+
+  gtk_window_destroy (GTK_WINDOW (win));
+  pump (50);
+  gtk_style_context_remove_provider_for_display (gdk_display_get_default (), GTK_STYLE_PROVIDER (css));
+  g_object_unref (css);
+  remove_tree (dir);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -1184,5 +1370,6 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/study-clock", test_study_clock);
   g_test_add_func ("/notes-ui/save-failure", test_save_failure);
   g_test_add_func ("/notes-ui/backups", test_backups);
+  g_test_add_func ("/notes-ui/sidebar-highlight", test_sidebar_highlight);
   return g_test_run ();
 }

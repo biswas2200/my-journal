@@ -19,6 +19,7 @@ struct _JnWindow {
   JnDb        *db;
   char        *export_dir;
   gint64       subject, topic, session;
+  gboolean     subject_picked; /* the subject was clicked last (for + Topic) */
   guint        save_id;
   gboolean     dirty;
   gboolean     rescued;        /* the unsaved text is in rescue_path */
@@ -304,6 +305,7 @@ void
 jn_window_select_subject (JnWindow *win, gint64 subject)
 {
   win->subject = subject;
+  win->subject_picked = TRUE;
   update_page (win);
 }
 
@@ -317,6 +319,7 @@ jn_window_open_topic (JnWindow *win, gint64 topic)
     topic = subject = 0;
   win->topic = topic;
   win->subject = subject;
+  win->subject_picked = FALSE;
   win->session = 0;
   show_page (win, "", "");
 }
@@ -329,14 +332,14 @@ jn_window_open_session (JnWindow *win, gint64 session)
   if (!jn_db_get_session (win->db, session, &s))
     return;
   win->session = session;
-  if (s.topic != win->topic)
-    {
-      gint64 subject = 0;
-      g_autofree char *sn = NULL, *tn = NULL;
-      jn_db_get_topic (win->db, s.topic, &subject, &sn, &tn);
-      win->topic = s.topic;
-      win->subject = subject;
-    }
+  /* The page's own topic and subject (a subject picked for + Topic may
+   * have been another). */
+  gint64 subject = 0;
+  g_autofree char *sn = NULL, *tn = NULL;
+  jn_db_get_topic (win->db, s.topic, &subject, &sn, &tn);
+  win->topic = s.topic;
+  win->subject = subject;
+  win->subject_picked = FALSE;
   show_page (win, s.body, s.sources);
   jn_session_clear (&s);
   jn_editor_cursor_to_end (win->editor); /* go on where you stopped */
@@ -349,6 +352,7 @@ jn_window_new_session (JnWindow *win)
     return;
   close_page (win);
   win->session = 0;
+  win->subject_picked = FALSE;
   show_page (win, "", "");
 }
 
@@ -466,8 +470,12 @@ on_export (GtkButton *b, gpointer data)
 
 /* ---- the list on the left ---------------------------------------------------- */
 
+/* Row marks: "current" is the one row highlighted, the thing clicked
+ * last; "open" marks the subject and topic of the page on the right. */
+typedef enum { PLAIN, OPEN, CURRENT } RowMark;
+
 static GtkWidget *
-row (JnWindow *win, RowKind kind, gint64 id, const char *text, gboolean current)
+row (JnWindow *win, RowKind kind, gint64 id, const char *text, RowMark mark)
 {
   GtkWidget *label = gtk_label_new (text);
   gtk_label_set_xalign (GTK_LABEL (label), 0.0f);
@@ -476,8 +484,10 @@ row (JnWindow *win, RowKind kind, gint64 id, const char *text, gboolean current)
   gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (r), label);
   static const char *css[] = { "subject-row", "topic-row", "session-row", "reference-row" };
   gtk_widget_add_css_class (r, css[kind]);
-  if (current)
+  if (mark == CURRENT)
     gtk_widget_add_css_class (r, "current");
+  else if (mark == OPEN)
+    gtk_widget_add_css_class (r, "open");
   g_object_set_data (G_OBJECT (r), "jn-kind", GINT_TO_POINTER (kind));
   g_object_set_data_full (G_OBJECT (r), "jn-id", g_memdup2 (&id, sizeof id), g_free);
   gtk_list_box_append (GTK_LIST_BOX (win->list), r);
@@ -489,21 +499,23 @@ add_session_row (gint64 id, gint64 started, gint64 ended, gpointer user)
 {
   JnWindow *win = user;
   g_autofree char *span = jn_format_span (started, ended);
-  row (win, ROW_SESSION, id, span, id == win->session);
+  gboolean shown = id == win->session && !win->reference;
+  row (win, ROW_SESSION, id, span, shown && !win->subject_picked ? CURRENT : PLAIN);
 }
 
 static void
 add_topic_row (gint64 id, const char *name, gpointer user)
 {
   JnWindow *win = user;
-  row (win, ROW_TOPIC, id, name, id == win->topic);
+  row (win, ROW_TOPIC, id, name, id == win->topic ? OPEN : PLAIN);
   if (id == win->topic)
     {
+      RowMark page = win->subject_picked ? PLAIN : CURRENT; /* what the page shows */
       if (copies_of (win, id) > 0)
-        row (win, ROW_REFERENCE, id, "\xe2\x98\x85 Topic reference", win->reference);
+        row (win, ROW_REFERENCE, id, "\xe2\x98\x85 Topic reference", win->reference ? page : PLAIN);
       jn_db_foreach_session (win->db, id, add_session_row, win);
       if (win->session == 0 && !win->reference)
-        row (win, ROW_SESSION, 0, "new session", TRUE);
+        row (win, ROW_SESSION, 0, "new session", page);
     }
 }
 
@@ -511,7 +523,12 @@ static void
 add_subject_row (gint64 id, const char *name, gpointer user)
 {
   JnWindow *win = user;
-  row (win, ROW_SUBJECT, id, name, id == win->subject && win->topic == 0);
+  RowMark mark = PLAIN;
+  if (id == win->subject && (win->subject_picked || win->topic == 0))
+    mark = CURRENT;
+  else if (win->topic != 0 && id == win->subject)
+    mark = OPEN;
+  row (win, ROW_SUBJECT, id, name, mark);
   jn_db_foreach_topic (win->db, id, add_topic_row, win);
 }
 
@@ -697,6 +714,7 @@ jn_window_open_reference (JnWindow *win, gint64 topic)
   win->topic = topic;
   win->subject = subject;
   win->session = 0;
+  win->subject_picked = FALSE;
   win->reference = TRUE;
   g_autofree char *title = g_strdup_printf ("\xe2\x98\x85 Topic reference \xc2\xb7 %s \xc2\xb7 read-only", tn);
   gtk_label_set_text (GTK_LABEL (win->ai_title), title);

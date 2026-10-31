@@ -14,6 +14,10 @@
 - A damaged notes file is never opened or backed up over a good copy;
   Notes names the newest backup to restore.
 
+### Fixed
+
+- The sidebar now highlights what you clicked (a style rule hid it).
+
 ## 0.1.0 (30 October 2026)
 
 The first release: a private journal and a separate Notes app for
