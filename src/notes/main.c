@@ -6,6 +6,7 @@
  * files (notesjail.h); without that lock it does not open any notes. */
 #include <glib-unix.h>
 #include <gtk/gtk.h>
+#include "notebackup.h"
 #include "noteexport.h"
 #include "notesdb.h"
 #include "notesjail.h"
@@ -77,14 +78,22 @@ on_activate (GApplication *app)
     }
   g_autofree char *path = g_build_filename (g_get_user_data_dir (), "journal-notes", "notes.db", NULL);
   g_autoptr (GError) error = NULL;
+  g_autofree char *backups = g_build_filename (g_get_user_data_dir (), "journal-notes", "backups", NULL);
   JnDb *db = jn_db_open (path, &error);
   if (db == NULL)
     {
-      fail (app, "The notes could not be opened", error->message);
+      /* Nothing was changed; say where the last good copy is. */
+      g_autofree char *latest = jn_backup_latest (backups);
+      g_autofree char *why = latest != NULL
+        ? g_strdup_printf ("%s\n\nThe newest backup is %s. To use it: keep Notes closed, then copy it over %s.",
+                           error->message, latest, path)
+        : g_strdup (error->message);
+      fail (app, "The notes could not be opened", why);
       return;
     }
   g_autofree char *exports = jn_export_dir ();
   JnWindow *win = jn_window_new (GTK_APPLICATION (app), db, exports);
+  jn_window_set_backup_dir (win, backups);
   /* The AI helper next to Notes ($JOURNAL_AI_HELPER: a build tree). */
   const char *helper = g_getenv ("JOURNAL_AI_HELPER");
   JnGeminiConfig ai = { helper != NULL && *helper != '\0' ? helper : JN_HELPER_PATH, NULL, NULL, NULL, NULL, { 0 }, 0 };

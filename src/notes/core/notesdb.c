@@ -95,6 +95,8 @@ prepare_file (const char *path, GError **error)
   return ok;
 }
 
+static gboolean quick_check (sqlite3 *h);
+
 JnDb *
 jn_db_open (const char *path, GError **error)
 {
@@ -124,6 +126,15 @@ jn_db_open (const char *path, GError **error)
       g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
                    "These notes were made by a newer version of Notes (file version %d; this one reads up to "
                    "%d). Install the newer version to open them.", version, VERSION);
+      jn_db_close (db);
+      return NULL;
+    }
+  if (rc == SQLITE_OK && !quick_check (db->h))
+    {
+      /* Nothing is written to it: not even the schema. */
+      g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
+                   "The notes file is damaged (it failed SQLite's check), so it was not opened and was left "
+                   "untouched.");
       jn_db_close (db);
       return NULL;
     }
@@ -509,4 +520,84 @@ jn_db_foreach_session (JnDb *db, gint64 topic, JnSessionFunc fn, gpointer user)
   while (s != NULL && sqlite3_step (s) == SQLITE_ROW)
     fn (sqlite3_column_int64 (s, 0), sqlite3_column_int64 (s, 1), sqlite3_column_int64 (s, 2), user);
   sqlite3_finalize (s);
+}
+
+/* ---- checks and copies ------------------------------------------------- */
+
+static gboolean
+quick_check (sqlite3 *h)
+{
+  sqlite3_stmt *s = NULL;
+  gboolean ok = sqlite3_prepare_v2 (h, "PRAGMA quick_check", -1, &s, NULL) == SQLITE_OK &&
+                sqlite3_step (s) == SQLITE_ROW && g_strcmp0 ((const char *) sqlite3_column_text (s, 0), "ok") == 0;
+  sqlite3_finalize (s);
+  return ok;
+}
+
+gboolean
+jn_db_check (JnDb *db)
+{
+  return quick_check (db->h);
+}
+
+static gboolean
+copy_failed (GError **error, const char *what, const char *why)
+{
+  g_set_error (error, G_FILE_ERROR, G_FILE_ERROR_FAILED, "The backup was not made: %s (%s)", what, why);
+  return FALSE;
+}
+
+gboolean
+jn_db_copy_to (JnDb *db, const char *path, GError **error)
+{
+  if (!quick_check (db->h))
+    return copy_failed (error, "the notes file failed its check", "the last good backup is kept");
+  g_autofree char *tmp = g_strconcat (path, ".tmp", NULL);
+  g_remove (tmp);
+  /* Made private before SQLite writes a byte into it. */
+  int fd = g_open (tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  if (fd < 0)
+    return copy_failed (error, tmp, g_strerror (errno));
+  close (fd);
+  sqlite3 *to = NULL;
+  int rc = sqlite3_open_v2 (tmp, &to, SQLITE_OPEN_READWRITE, NULL);
+  if (rc == SQLITE_OK)
+    rc = sqlite3_exec (to, "PRAGMA synchronous = FULL;", NULL, NULL, NULL);
+  if (rc == SQLITE_OK)
+    {
+      sqlite3_backup *b = sqlite3_backup_init (to, "main", db->h, "main");
+      if (b == NULL)
+        rc = sqlite3_errcode (to);
+      else
+        {
+          sqlite3_backup_step (b, -1);
+          rc = sqlite3_backup_finish (b);
+        }
+    }
+  gboolean sound = rc == SQLITE_OK && quick_check (to);
+  g_autofree char *why = g_strdup (rc != SQLITE_OK ? sqlite3_errstr (rc) : "the copy failed its check");
+  sqlite3_close (to);
+  if (!sound)
+    {
+      g_remove (tmp);
+      return copy_failed (error, "copying", why);
+    }
+  /* On disk before it takes the old copy's place. */
+  fd = g_open (tmp, O_RDONLY | O_CLOEXEC, 0);
+  gboolean synced = fd >= 0 && fsync (fd) == 0;
+  if (fd >= 0)
+    close (fd);
+  if (!synced || g_rename (tmp, path) != 0)
+    {
+      int e = errno;
+      g_remove (tmp);
+      return copy_failed (error, path, g_strerror (e));
+    }
+  return TRUE;
+}
+
+void
+jn_db_set_read_only (JnDb *db, gboolean read_only)
+{
+  sqlite3_exec (db->h, read_only ? "PRAGMA query_only = ON;" : "PRAGMA query_only = OFF;", NULL, NULL, NULL);
 }

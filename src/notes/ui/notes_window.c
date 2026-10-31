@@ -6,10 +6,12 @@
 #include <glib/gstdio.h>
 #include "clock_bar.h"
 #include "md_view.h"
+#include "notebackup.h"
 #include "noteexport.h"
 #include "programs.h"
 
 #define SAVE_DELAY_MS 1000
+#define RETRY_DELAY_MS 5000 /* after a failed save */
 
 struct _JnWindow {
   GtkApplicationWindow parent_instance;
@@ -19,6 +21,10 @@ struct _JnWindow {
   gint64       subject, topic, session;
   guint        save_id;
   gboolean     dirty;
+  gboolean     rescued;        /* the unsaved text is in rescue_path */
+  gint64       rescue_session; /* the session rescue_path belongs to */
+  char        *rescue_path;
+  char        *backup_dir;
   JnLeaveFunc  leave;
   gpointer     leave_user;
 
@@ -57,6 +63,16 @@ set_status (JnWindow *win, const char *text)
 {
   gtk_label_set_text (GTK_LABEL (win->status), text != NULL ? text : "");
   gtk_widget_set_tooltip_text (win->status, text); /* the whole message, when it is cut */
+  gtk_widget_remove_css_class (win->status, "error");
+}
+
+/* A message that must not be missed: in red, with the bell. */
+static void
+set_alarm (JnWindow *win, const char *text)
+{
+  set_status (win, text);
+  gtk_widget_add_css_class (win->status, "error");
+  gtk_widget_error_bell (win->status);
 }
 
 static void
@@ -143,6 +159,42 @@ update_page (JnWindow *win)
 
 /* ---- saving ------------------------------------------------------------ */
 
+/* The open note as Markdown in ~/Documents/Notes/Unsaved, one file per
+ * session, rewritten in full each time: so a failed save still leaves
+ * the text on disk. Reads the store only for names and times. */
+static gboolean
+rescue (JnWindow *win, const char *body, const char *sources, GError **error)
+{
+  gint64 subject = 0, t = now ();
+  g_autofree char *sn = NULL, *tn = NULL;
+  if (!jn_db_get_topic (win->db, win->topic, &subject, &sn, &tn))
+    {
+      sn = g_strdup ("Notes");
+      tn = g_strdup ("Untitled");
+    }
+  JnSession s = { 0 };
+  gint64 started = jn_db_get_session (win->db, win->session, &s) ? s.started : t;
+  jn_session_clear (&s);
+  JnExport *e = jn_export_new (sn, tn);
+  jn_export_add_session (e, started, t, sources, body);
+  g_autofree char *md = jn_export_finish (e);
+  if (win->rescue_session != win->session)
+    {
+      g_clear_pointer (&win->rescue_path, g_free);
+      win->rescue_session = win->session;
+    }
+  g_autofree char *dir = g_build_filename (win->export_dir, "Unsaved", NULL);
+  g_autofree char *name = win->rescue_path != NULL ? g_path_get_basename (win->rescue_path)
+                                                   : jn_rescue_file_name (sn, tn, t);
+  if (!jn_rescue_write (dir, name, md, error))
+    return FALSE;
+  if (win->rescue_path == NULL)
+    win->rescue_path = g_build_filename (dir, name, NULL);
+  return TRUE;
+}
+
+static gboolean on_save_timeout (gpointer data);
+
 void
 jn_window_save (JnWindow *win)
 {
@@ -154,12 +206,39 @@ jn_window_save (JnWindow *win)
   if (jn_db_save_session (win->db, win->session, body, sources, now ()))
     {
       win->dirty = FALSE;
+      win->rescued = FALSE;
       g_autoptr (GDateTime) t = g_date_time_new_now_local ();
       g_autofree char *at = g_date_time_format (t, "Saved %H:%M");
-      set_status (win, at);
+      if (win->rescue_path != NULL && win->rescue_session == win->session)
+        {
+          g_autofree char *msg = g_strdup_printf ("%s. Saving works again; the copy in Documents/Notes/Unsaved is "
+                                                  "no longer needed.", at);
+          set_status (win, msg);
+        }
+      else
+        set_status (win, at);
     }
   else
-    set_status (win, "Could not save");
+    {
+      /* The text must be on disk somewhere, now; then keep trying. */
+      g_autoptr (GError) error = NULL;
+      win->rescued = rescue (win, body, sources, &error);
+      if (win->rescued)
+        {
+          g_autofree char *name = g_path_get_basename (win->rescue_path);
+          g_autofree char *msg = g_strdup_printf ("Could not save to the notes file. Your text is safe in "
+                                                  "Documents/Notes/Unsaved/%s; Notes keeps trying.", name);
+          set_alarm (win, msg);
+        }
+      else
+        {
+          g_autofree char *msg = g_strdup_printf ("Could not save, and no copy could be written (%s): your latest "
+                                                  "text is not saved. Keep Notes open and copy the text somewhere "
+                                                  "safe.", error->message);
+          set_alarm (win, msg);
+        }
+      win->save_id = g_timeout_add (RETRY_DELAY_MS, on_save_timeout, win);
+    }
   update_span (win);
 }
 
@@ -847,9 +926,12 @@ static gboolean
 on_close_request (GtkWindow *window)
 {
   JnWindow *win = JN_WINDOW (window);
+  close_page (win);
+  /* Text that is neither saved nor rescued: Notes stays open. */
+  if (win->dirty && !win->rescued)
+    return TRUE;
   if (win->ai_cancel != NULL)
     g_cancellable_cancel (win->ai_cancel);
-  close_page (win);
   return FALSE;
 }
 
@@ -987,6 +1069,11 @@ jn_window_dispose (GObject *object)
   JnWindow *win = JN_WINDOW (object);
   if (win->clock != NULL && win->db != NULL)
     jn_clock_bar_flush (win->clock);
+  /* The day's backup, as Notes closes. */
+  if (win->backup_dir != NULL && win->db != NULL)
+    jn_backup_now (win->db, win->backup_dir, now (), JN_BACKUP_KEEP, NULL);
+  g_clear_pointer (&win->backup_dir, g_free);
+  g_clear_pointer (&win->rescue_path, g_free);
   g_clear_handle_id (&win->save_id, g_source_remove);
   if (win->ai_cancel != NULL)
     g_cancellable_cancel (win->ai_cancel);
@@ -1169,4 +1256,23 @@ JnDb *
 jn_window_db (JnWindow *win)
 {
   return win->db;
+}
+
+void
+jn_window_set_backup_dir (JnWindow *win, const char *dir)
+{
+  g_free (win->backup_dir);
+  win->backup_dir = g_strdup (dir);
+  g_autoptr (GError) error = NULL;
+  if (!jn_backup_now (win->db, dir, now (), JN_BACKUP_KEEP, &error))
+    {
+      g_autofree char *msg = g_strdup_printf ("No backup was made today: %s", error->message);
+      set_alarm (win, msg);
+    }
+}
+
+const char *
+jn_window_rescue_path (JnWindow *win)
+{
+  return win->rescue_path;
 }

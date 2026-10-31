@@ -1,5 +1,19 @@
 # Changes
 
+## Unreleased
+
+### Notes: your text survives anything
+
+- A save that fails (a full disk, a broken file) is never silent: the
+  note goes at once to `~/Documents/Notes/Unsaved/`, the status line
+  turns red and says where, and Notes keeps trying. If even that copy
+  cannot be written, Notes will not close until the text is saved.
+- Daily backups of `notes.db` (the last 14 days) in
+  `~/.local/share/journal-notes/backups/`, made when Notes opens and
+  when it closes, each checked before it replaces anything.
+- A damaged notes file is never opened or backed up over a good copy;
+  Notes names the newest backup to restore.
+
 ## 0.1.0 (30 October 2026)
 
 The first release: a private journal and a separate Notes app for

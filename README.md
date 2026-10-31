@@ -136,6 +136,24 @@ never sees it.
 Notes live in `~/.local/share/journal-notes/notes.db` (0600 in a 0700
 folder). They are study material, so the file is not encrypted.
 
+### Keeping your notes safe
+
+- **Every save is all or nothing**, written to disk before it counts
+  (SQLite with `synchronous=FULL`): a crash, a kill or a power cut
+  leaves the last save, never a half-written file. At most the last
+  second of typing is at risk.
+- **A save that fails is never silent.** The text goes at once to
+  `~/Documents/Notes/Unsaved/<subject> - <topic> <date> <time>.md`, the
+  status line turns red and says where, and Notes tries again every 5
+  seconds. If even that copy cannot be written, Notes will not close
+  until the text is saved.
+- **Daily backups**: `~/.local/share/journal-notes/backups/notes-YYYY-MM-DD.db`,
+  made when Notes opens and again when it closes; the last 14 days are
+  kept. Each is a whole copy, checked before it replaces anything.
+- **A damaged file is never opened** (or backed up over a good copy).
+  Notes says so and names the newest backup. To restore one: keep Notes
+  closed, then copy it over `notes.db`.
+
 ## AI enhanced copy
 
 **✦ Enhance** (`Ctrl+Shift+E`) writes an enhanced copy of the open
@@ -378,7 +396,7 @@ what only you can check is in [REPORT.md](REPORT.md).
 
 | Check | Result (30 Oct 2026) | How |
 | --- | --- | --- |
-| Unit, UI and integration tests | 41 suites, all pass | `meson test -C build` |
+| Unit, UI and integration tests | 42 suites, all pass | `meson test -C build` |
 | Network jail: every non-local socket family, random and 64-bit domains, a real TCP listener that must receive nothing, io_uring, x32, threads, child programs | all refused | `tests/test_netjail.c` |
 | AppArmor profile, probed from outside without the jail | TCP, UDP, IPv6, DNS via resolved and the link portal refused | `tools/check-apparmor.sh` |
 | Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |
@@ -445,7 +463,8 @@ src/notes/    `journal-notes`: Notes (study notes, AI enhanced copy)
               line kinds), notesdb (SQLite), notesjail (Landlock),
               noteexport (Markdown export, topic reference), studyclock
               (the stopwatch and timer, no real clock inside), markdown
-              (reading the copy's Markdown), svgsafe (diagram safety)
+              (reading the copy's Markdown), svgsafe (diagram safety),
+              notebackup (daily backups, rescue copies)
   ai/         textify (page to text), netguard (which links and
               addresses), aiproto (sign-in, Gemini request and answer,
               Notes <-> helper messages), fetch (Sources), client (Notes'

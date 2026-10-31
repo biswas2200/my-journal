@@ -82,6 +82,7 @@ notes_core_lib = static_library('notes-core',
   'src/notes/core/markdown.c',
   'src/notes/core/svgsafe.c',
   'src/notes/core/studyclock.c',
+  'src/notes/core/notebackup.c',
   c_args : notes_core_args,
   dependencies : [glib_dep, gio_dep, sqlite_dep],
 )

@@ -12,6 +12,7 @@
 #include "clock_bar.h"
 #include "editor.h"
 #include "md_view.h"
+#include "notebackup.h"
 #include "notes_window.h"
 #include "notesjail.h"
 #include "programs.h"
@@ -969,6 +970,186 @@ test_study_clock (void)
   g_object_unref (css);
 }
 
+/* A failing store (as on a full disk) logs "SQLite: ..." warnings; they
+ * are expected here and dropped. Any other warning still fails the test. */
+static gboolean other_warning;
+
+static void
+drop_sqlite_warnings (const char *domain, GLogLevelFlags level, const char *message, gpointer user)
+{
+  (void) user;
+  if (g_str_has_prefix (message, "SQLite:"))
+    return;
+  other_warning = TRUE;
+  g_log_default_handler (domain, level, message, NULL);
+}
+
+static char *
+read_file (const char *path)
+{
+  char *text = NULL;
+  return g_file_get_contents (path, &text, NULL, NULL) ? text : NULL;
+}
+
+static void
+remove_tree (const char *path)
+{
+  GDir *d = g_dir_open (path, 0, NULL);
+  if (d != NULL)
+    {
+      for (const char *n = g_dir_read_name (d); n != NULL; n = g_dir_read_name (d))
+        {
+          g_autofree char *child = g_build_filename (path, n, NULL);
+          remove_tree (child);
+        }
+      g_dir_close (d);
+      g_rmdir (path);
+    }
+  else
+    g_remove (path);
+}
+
+/* A save that fails never loses the text: it goes to a rescue copy at
+ * once, the status says so in plain words, Notes keeps trying, and it
+ * only closes once the text is on disk somewhere. */
+static void
+test_save_failure (void)
+{
+  GLogLevelFlags fatal = g_log_set_always_fatal (G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
+  guint quiet = g_log_set_handler ("journal", G_LOG_LEVEL_WARNING, drop_sqlite_warnings, NULL);
+  g_autofree char *dir = g_dir_make_tmp ("notes-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  g_autofree char *exports = g_build_filename (dir, "exports", NULL);
+  g_autofree char *unsaved = g_build_filename (exports, "Unsaved", NULL);
+  JnDb *db = jn_db_open (path, NULL);
+  JnWindow *win = jn_window_new (NULL, db, exports);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (200);
+  JnEditor *e = jn_window_editor (win);
+  jn_window_add_subject (win, "DSA");
+  jn_window_add_topic (win, "Heaps");
+  jn_editor_focus (e);
+  type (e, "# Heaps⏎- sift down");
+  pump (1300);
+  gint64 session = jn_window_session (win);
+  g_assert_null (jn_window_rescue_path (win));
+
+  /* The disk "fills up": the next save fails, the text goes to a rescue
+   * copy straight away. */
+  jn_db_set_read_only (db, TRUE);
+  type (e, "⏎- O(log n)");
+  pump (1300);
+  g_assert_nonnull (strstr (jn_window_status (win), "Could not save"));
+  g_assert_nonnull (strstr (jn_window_status (win), "Unsaved"));
+  const char *rescue = jn_window_rescue_path (win);
+  g_assert_nonnull (rescue);
+  g_assert_true (g_str_has_prefix (rescue, unsaved));
+  g_autofree char *copy = read_file (rescue);
+  g_assert_nonnull (copy);
+  g_assert_nonnull (strstr (copy, "- sift down\n- O(log n)"));
+  g_assert_nonnull (strstr (copy, "Subject: DSA"));
+
+  /* More typing: the same rescue file, kept up to date. */
+  type (e, "⏎- heapify");
+  jn_window_save (win);
+  g_autofree char *rescue2 = g_strdup (jn_window_rescue_path (win));
+  g_assert_cmpstr (rescue2, ==, rescue);
+  g_autofree char *copy2 = read_file (rescue2);
+  g_assert_nonnull (strstr (copy2, "- O(log n)\n- heapify"));
+
+  /* Nowhere for a rescue copy either: Notes will not close. */
+  g_autofree char *moved = g_strconcat (exports, ".away", NULL);
+  g_assert_cmpint (g_rename (exports, moved), ==, 0);
+  g_assert_true (g_file_set_contents (exports, "a file where the folder was", -1, NULL));
+  type (e, "⏎- last");
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (300);
+  g_assert_nonnull (win);
+  g_assert_nonnull (strstr (jn_window_status (win), "not saved"));
+
+  /* The disk has room again: the next try saves everything, and now it
+   * closes. */
+  jn_db_set_read_only (db, FALSE);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (300);
+  g_assert_null (win);
+  db = jn_db_open (path, NULL);
+  JnSession s = { 0 };
+  g_assert_true (jn_db_get_session (db, session, &s));
+  g_assert_cmpstr (s.body, ==, "# Heaps\n- sift down\n- O(log n)\n- heapify\n- last");
+  jn_session_clear (&s);
+  jn_db_close (db);
+
+  /* Closing while saves fail, with room for the rescue copy: it closes,
+   * the text is in the copy. */
+  g_remove (exports);
+  g_assert_cmpint (g_rename (moved, exports), ==, 0);
+  db = jn_db_open (path, NULL);
+  win = jn_window_new (NULL, db, exports);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (200);
+  e = jn_window_editor (win);
+  jn_window_open_session (win, session);
+  jn_db_set_read_only (db, TRUE);
+  jn_editor_focus (e);
+  type (e, "⏎- closing now");
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (300);
+  g_assert_null (win);
+  g_autoptr (GDir) list = g_dir_open (unsaved, 0, NULL);
+  gboolean found = FALSE;
+  for (const char *n = g_dir_read_name (list); n != NULL; n = g_dir_read_name (list))
+    {
+      g_autofree char *f = g_build_filename (unsaved, n, NULL);
+      g_autofree char *text = read_file (f);
+      found |= text != NULL && strstr (text, "- last\n- closing now") != NULL;
+    }
+  g_assert_true (found);
+
+  remove_tree (dir);
+  g_log_remove_handler ("journal", quiet);
+  g_log_set_always_fatal (fatal);
+  g_assert_false (other_warning);
+}
+
+/* Backups: one when Notes opens, the day's copy brought up to date when
+ * it closes. */
+static void
+test_backups (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  g_autofree char *exports = g_build_filename (dir, "exports", NULL);
+  g_autofree char *backups = g_build_filename (dir, "backups", NULL);
+  JnDb *db = jn_db_open (path, NULL);
+  JnWindow *win = jn_window_new (NULL, db, exports);
+  jn_window_set_backup_dir (win, backups);
+  g_autofree char *latest = jn_backup_latest (backups);
+  g_assert_nonnull (latest);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (200);
+  JnEditor *e = jn_window_editor (win);
+  jn_window_add_subject (win, "OS");
+  jn_window_add_topic (win, "Paging");
+  jn_editor_focus (e);
+  type (e, "- page table");
+  gint64 session = jn_window_session (win);
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (300);
+  g_assert_null (win);
+  JnDb *copy = jn_db_open (latest, NULL);
+  g_assert_nonnull (copy);
+  JnSession s = { 0 };
+  g_assert_true (jn_db_get_session (copy, session, &s));
+  g_assert_cmpstr (s.body, ==, "- page table");
+  jn_session_clear (&s);
+  jn_db_close (copy);
+  remove_tree (dir);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -997,5 +1178,7 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/md-view", test_md_view);
   g_test_add_func ("/notes-ui/clock-bar", test_clock_bar);
   g_test_add_func ("/notes-ui/study-clock", test_study_clock);
+  g_test_add_func ("/notes-ui/save-failure", test_save_failure);
+  g_test_add_func ("/notes-ui/backups", test_backups);
   return g_test_run ();
 }

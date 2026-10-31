@@ -25,9 +25,20 @@ typedef void (*JnNameFunc)    (gint64 id, const char *name, gpointer user);
 typedef void (*JnSessionFunc) (gint64 id, gint64 started, gint64 ended, gpointer user);
 
 /* Opens or creates the file; ":memory:" for a scratch store. Refuses a
- * file made by a newer version, leaving it untouched. */
+ * file made by a newer version, or a damaged one (SQLite's quick check),
+ * leaving it untouched. */
 JnDb    *jn_db_open             (const char *path, GError **error);
 void     jn_db_close            (JnDb *db);
+
+/* SQLite's quick check of the whole store: TRUE if it is sound. */
+gboolean jn_db_check            (JnDb *db);
+/* A full copy at `path`, made while the store stays open: written next
+ * to it first, checked, made private (0600) and only then renamed into
+ * place, so `path` is always a whole, sound copy or the one it was.
+ * Refused if the store itself fails its check. */
+gboolean jn_db_copy_to          (JnDb *db, const char *path, GError **error);
+/* For tests: every change fails from now on (as on a full disk). */
+void     jn_db_set_read_only    (JnDb *db, gboolean read_only);
 
 /* 0 / FALSE when the name is empty or taken, or the parent is missing. */
 gint64   jn_db_add_subject      (JnDb *db, const char *name);

@@ -53,6 +53,11 @@ gboolean  jn_window_is_enhancing   (JnWindow *win);
  * the open topic. Study time goes to the topic open while it ran. */
 JnClockBar *jn_window_clock_bar    (JnWindow *win);
 const char *jn_window_studied      (JnWindow *win);
+/* Daily backups of the store in `dir` (notebackup.h): one now, and the
+ * day's copy again when the window closes. */
+void      jn_window_set_backup_dir (JnWindow *win, const char *dir);
+/* Where the open note was rescued to after a failed save, or NULL. */
+const char *jn_window_rescue_path  (JnWindow *win);
 /* The status line's text (for tests). */
 const char *jn_window_status       (JnWindow *win);
 
