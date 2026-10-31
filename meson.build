@@ -96,6 +96,7 @@ notes_core_dep = declare_dependency(
 json_dep = dependency('json-glib-1.0', version : '>= 1.6')
 soup_dep = dependency('libsoup-3.0', version : '>= 3.0')
 notes_ai_lib = static_library('notes-ai',
+  'src/notes/ai/jsonsafe.c',
   'src/notes/ai/textify.c',
   'src/notes/ai/netguard.c',
   'src/notes/ai/aiproto.c',
@@ -113,6 +114,16 @@ notes_fetch_lib = static_library('notes-fetch', 'src/notes/ai/fetch.c',
 notes_fetch_dep = declare_dependency(
   link_with : notes_fetch_lib,
   dependencies : [notes_ai_dep, soup_dep],
+)
+# Backing up to Google Drive: the messages (pure, tested alone).
+notes_drive_lib = static_library('notes-drive', 'src/notes/drive/driveproto.c', 'src/notes/drive/oauth.c',
+  include_directories : include_directories('src/notes/drive'),
+  dependencies : [notes_ai_dep, notes_core_dep],
+)
+notes_drive_dep = declare_dependency(
+  link_with : notes_drive_lib,
+  include_directories : include_directories('src/notes/drive'),
+  dependencies : [notes_ai_dep, notes_core_dep],
 )
 # Notes asking the helper (token from your sign-in, then journal-ai).
 notes_client_lib = static_library('notes-client', 'src/notes/ai/client.c',

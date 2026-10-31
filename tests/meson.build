@@ -31,6 +31,11 @@ exe = executable('test_fetch', 'test_fetch.c', dependencies : notes_fetch_dep)
 test('fetch', isolated, args : [exe], env : test_env, suite : 'core', timeout : 60)
 
 # The real AI helper against a fake Gemini on this machine.
+exe = executable('test_driveproto', 'test_driveproto.c', dependencies : notes_drive_dep)
+test('driveproto', isolated, args : [exe], env : test_env, suite : 'core')
+exe = executable('test_oauth', 'test_oauth.c', dependencies : notes_drive_dep)
+test('oauth', isolated, args : [exe], env : test_env, suite : 'core')
+
 exe = executable('test_ai_helper', 'test_ai_helper.c', dependencies : [notes_ai_dep, soup_dep])
 test('ai-helper', isolated, args : [exe, ai_exe], env : test_env, suite : 'sandbox', timeout : 60)
 
