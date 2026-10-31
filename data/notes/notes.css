@@ -39,6 +39,7 @@ row.session-row { padding: 3px 14px 3px 44px; color: #9B9B9B; font-size: 11px; }
 /* "current": the one row clicked last; "open": the page's subject and
  * topic. Scoped like the transparent rule above, or that one wins. */
 .sidebar list > row.open { color: #FFFFFF; }
+row.subject-row .arrow { color: #6E6E6E; font-weight: normal; min-width: 10px; }
 .sidebar list > row:hover { background: #181818; }
 .sidebar list > row.current { color: #FFFFFF; background: #1C2633; border-left: 2px solid #6C8EBF; }
 .adds { margin: 10px; }

@@ -20,12 +20,21 @@
 - A backup cut off by a crash no longer leaves SQLite's side file
   behind, where the next backup could have picked it up.
 
+### Faster with many notes
+
+- Measured with 10 000 topics and 100 000 sessions. The sidebar now
+  shows one subject's topics at a time (▸ / ▾), and the autosave no
+  longer rebuilds the list. Opening a topic went from 454 ms to 5 ms,
+  and typing no longer freezes for about 280 ms at each autosave.
+
 ### Tests
 
 - Notes crash test (SIGKILL while saving and backing up), a memory
   no-growth test for the Notes window, and `tools/sanity.sh`: this tree
   and the last release side by side, including old notes in the new
   build and back. CI runs it on every push.
+- A load test (`meson test --suite load`) with years of notes, timed
+  against fixed limits; CI runs it too.
 
 ## 0.1.0 (30 October 2026)
 

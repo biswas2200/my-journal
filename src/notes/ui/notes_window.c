@@ -254,13 +254,17 @@ close_page (JnWindow *win)
     win->session = 0;
 }
 
+static void refresh_session_row (JnWindow *win);
+
 static gboolean
 on_save_timeout (gpointer data)
 {
   JnWindow *win = data;
   win->save_id = 0;
   jn_window_save (win);
-  rebuild (win); /* the session's time in the list */
+  /* Only the session's time in the list changed: a whole rebuild here
+   * would freeze typing once a second when there are many notes. */
+  refresh_session_row (win);
   return G_SOURCE_REMOVE;
 }
 
@@ -474,14 +478,28 @@ on_export (GtkButton *b, gpointer data)
  * last; "open" marks the subject and topic of the page on the right. */
 typedef enum { PLAIN, OPEN, CURRENT } RowMark;
 
+/* A row of the list. Subjects get a ▸ / ▾ in front of their name; the
+ * name is always the row's last label. */
 static GtkWidget *
 row (JnWindow *win, RowKind kind, gint64 id, const char *text, RowMark mark)
 {
   GtkWidget *label = gtk_label_new (text);
   gtk_label_set_xalign (GTK_LABEL (label), 0.0f);
   gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
+  gtk_widget_set_hexpand (label, TRUE);
   GtkWidget *r = gtk_list_box_row_new ();
-  gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (r), label);
+  if (kind == ROW_SUBJECT)
+    {
+      GtkWidget *box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+      GtkWidget *arrow = gtk_label_new (id == win->subject ? "\xe2\x96\xbe" : "\xe2\x96\xb8"); /* ▾ open, ▸ closed */
+      gtk_widget_add_css_class (arrow, "arrow");
+      gtk_box_append (GTK_BOX (box), arrow);
+      gtk_box_append (GTK_BOX (box), label);
+      gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (r), box);
+      gtk_accessible_update_property (GTK_ACCESSIBLE (r), GTK_ACCESSIBLE_PROPERTY_LABEL, text, -1);
+    }
+  else
+    gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (r), label);
   static const char *css[] = { "subject-row", "topic-row", "session-row", "reference-row" };
   gtk_widget_add_css_class (r, css[kind]);
   if (mark == CURRENT)
@@ -529,7 +547,11 @@ add_subject_row (gint64 id, const char *name, gpointer user)
   else if (win->topic != 0 && id == win->subject)
     mark = OPEN;
   row (win, ROW_SUBJECT, id, name, mark);
-  jn_db_foreach_topic (win->db, id, add_topic_row, win);
+  /* Only one subject is open at a time (the one picked, or the open
+   * topic's): with thousands of topics, a list of all of them would be
+   * slow to build and to scroll through. */
+  if (id == win->subject)
+    jn_db_foreach_topic (win->db, id, add_topic_row, win);
 }
 
 static void
@@ -539,6 +561,23 @@ rebuild (JnWindow *win)
   while ((child = gtk_widget_get_first_child (win->list)) != NULL)
     gtk_list_box_remove (GTK_LIST_BOX (win->list), child);
   jn_db_foreach_subject (win->db, add_subject_row, win);
+}
+
+/* The open session's row shows its time, which grows as you study. */
+static void
+refresh_session_row (JnWindow *win)
+{
+  if (win->session == 0)
+    return;
+  JnSession s = { 0 };
+  if (!jn_db_get_session (win->db, win->session, &s))
+    return;
+  g_autofree char *span = jn_format_span (s.started, s.ended);
+  jn_session_clear (&s);
+  for (GtkWidget *r = gtk_widget_get_first_child (win->list); r != NULL; r = gtk_widget_get_next_sibling (r))
+    if (GPOINTER_TO_INT (g_object_get_data (G_OBJECT (r), "jn-kind")) == ROW_SESSION &&
+        *(gint64 *) g_object_get_data (G_OBJECT (r), "jn-id") == win->session)
+      gtk_label_set_text (GTK_LABEL (gtk_list_box_row_get_child (GTK_LIST_BOX_ROW (r))), span);
 }
 
 static void

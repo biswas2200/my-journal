@@ -72,6 +72,13 @@ notes_ui_test = executable('test_notes_ui', 'test_notes_ui.c', dependencies : no
 test('notes-ui', find_program('run-headless.sh'), args : [notes_ui_test],
      env : test_env, suite : 'ui', timeout : 120)
 
+# Years of notes at once (10 000 topics, 100 000 sessions, 1 MB notes),
+# with what you feel timed against limits; its own suite, as it takes a
+# while (meson test --suite load). JN_LOAD_SLACK=2 for slow machines.
+notes_load_test = executable('test_notes_load', 'test_notes_load.c', dependencies : [notes_ui_dep, sqlite_dep])
+test('notes-load', find_program('run-headless.sh'), args : [notes_load_test],
+     env : test_env, suite : 'load', timeout : 600)
+
 # The real Notes program, alone and under the real start screen. Not
 # beside 'launcher': both start the real start screen on one test bus, and
 # a second one hands over to the first and exits.

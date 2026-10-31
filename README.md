@@ -76,6 +76,10 @@ type it and press Enter.
 
 ## Notes
 
+The sidebar lists every subject (▸); the one you click, or the one
+whose topic is open, unfolds (▾) to show its topics, so the list stays
+short and quick however many notes there are.
+
 Subjects (DSA) hold topics (Prefix sum), which hold study sessions: one
 note each, timed from its first keystroke to the last edit while you
 study (an edit more than 30 minutes later, like fixing a typo next week,
@@ -418,6 +422,7 @@ what only you can check is in [REPORT.md](REPORT.md).
 | Valgrind memcheck | 0 errors, 0 leaks | see Tests |
 | Line coverage | 89.2% overall (Journal, Notes and the start screen) | `tools/coverage.sh` |
 | Compiler warnings | `-Wall -Wextra -Werror`, none | every build |
+| Notes under load: 10 000 topics, 100 000 sessions, 1 MB notes | open 127 ms, a topic 5 ms, longest freeze while typing 5 ms, a 1 MB note 661 ms | `meson test --suite load` |
 | Fuzzing (libFuzzer + ASan + UBSan on GitHub, 10 targets: 5 Journal, 5 Notes) | 9 bugs found and fixed: a damaged file could hand the calendar a missing day; in Notes, a one-byte over-read of every fetched page, a second `url()` or a second root in an AI diagram not checked, broken UTF-8 read past its end, broken JSON that could abort Notes, older json-glib leaking or passing broken text on odd JSON, an error that could repeat a sign-in secret, and a long line of unclosed Markdown marks taking seconds | [`fuzz/README.md`](fuzz/README.md) |
 
 What a crash can and cannot lose: entries are saved about a second

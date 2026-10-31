@@ -1164,6 +1164,17 @@ test_backups (void)
 
 /* ---- the sidebar's highlight -------------------------------------------- */
 
+/* A sidebar row's text: its label, or for a subject (▸ name) the last
+ * label in it. */
+static const char *
+row_text (GtkWidget *r)
+{
+  GtkWidget *child = gtk_list_box_row_get_child (GTK_LIST_BOX_ROW (r));
+  if (GTK_IS_BOX (child))
+    child = gtk_widget_get_last_child (child);
+  return GTK_IS_LABEL (child) ? gtk_label_get_text (GTK_LABEL (child)) : NULL;
+}
+
 /* The sidebar rows (subject, topic, session, reference) carrying
  * `css_class`, as their labels' text, top to bottom, joined by " | ". */
 static void
@@ -1171,10 +1182,9 @@ collect_rows (GtkWidget *w, const char *css_class, GString *out, GtkWidget **fir
 {
   if (GTK_IS_LIST_BOX_ROW (w) && gtk_widget_has_css_class (w, css_class))
     {
-      GtkWidget *label = gtk_list_box_row_get_child (GTK_LIST_BOX_ROW (w));
       if (out->len > 0)
         g_string_append (out, " | ");
-      g_string_append (out, gtk_label_get_text (GTK_LABEL (label)));
+      g_string_append (out, row_text (w));
       if (first != NULL && *first == NULL)
         *first = w;
     }
@@ -1196,12 +1206,8 @@ rows_with (JnWindow *win, const char *css_class, GtkWidget **first)
 static GtkWidget *
 find_row (GtkWidget *w, const char *text)
 {
-  if (GTK_IS_LIST_BOX_ROW (w))
-    {
-      GtkWidget *label = gtk_list_box_row_get_child (GTK_LIST_BOX_ROW (w));
-      if (GTK_IS_LABEL (label) && g_strcmp0 (gtk_label_get_text (GTK_LABEL (label)), text) == 0)
-        return w;
-    }
+  if (GTK_IS_LIST_BOX_ROW (w) && g_strcmp0 (row_text (w), text) == 0)
+    return w;
   for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
     {
       GtkWidget *found = find_row (c, text);
@@ -1352,6 +1358,77 @@ test_sidebar_highlight (void)
   remove_tree (dir);
 }
 
+/* All the sidebar's rows, top to bottom, " | " between; a subject as
+ * "▸ name" or "▾ name". */
+static void
+collect_all (GtkWidget *w, GString *out)
+{
+  if (GTK_IS_LIST_BOX_ROW (w))
+    {
+      if (out->len > 0)
+        g_string_append (out, " | ");
+      GtkWidget *child = gtk_list_box_row_get_child (GTK_LIST_BOX_ROW (w));
+      if (GTK_IS_BOX (child))
+        g_string_append_printf (out, "%s ", gtk_label_get_text (GTK_LABEL (gtk_widget_get_first_child (child))));
+      g_string_append (out, row_text (w));
+      return;
+    }
+  for (GtkWidget *c = gtk_widget_get_first_child (w); c != NULL; c = gtk_widget_get_next_sibling (c))
+    collect_all (c, out);
+}
+
+static char *
+sidebar (JnWindow *win)
+{
+  GString *out = g_string_new (NULL);
+  collect_all (GTK_WIDGET (win), out);
+  return g_string_free (out, FALSE);
+}
+
+/* One subject open at a time (the one picked, or the open topic's):
+ * only its topics are listed, so thousands of topics stay quick. */
+static void
+test_sidebar_folds (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  JnDb *db = jn_db_open (path, NULL);
+  gint64 dsa = jn_db_add_subject (db, "DSA");
+  gint64 os = jn_db_add_subject (db, "OS");
+  jn_db_add_topic (db, dsa, "Heaps");
+  jn_db_add_topic (db, dsa, "Tries");
+  gint64 paging = jn_db_add_topic (db, os, "Paging");
+  JnWindow *win = jn_window_new (NULL, db, dir);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (100);
+
+  static const struct { const char *step, *want; } t[] = {
+    { "nothing open",           "\u25b8 DSA | \u25b8 OS" },
+    { "a subject clicked",      "\u25be DSA | Heaps | Tries | \u25b8 OS" },
+    { "another subject",        "\u25b8 DSA | \u25be OS | Paging" },
+    { "a topic opened",         "\u25b8 DSA | \u25be OS | Paging | new session" },
+    { "the first subject again", "\u25be DSA | Heaps | Tries | \u25b8 OS" },
+  };
+  JrCases c = { "sidebar folds", 0, 0 };
+  for (gsize i = 0; i < G_N_ELEMENTS (t); i++)
+    {
+      switch (i)
+        {
+        case 1: click_row (win, "DSA"); break;
+        case 2: click_row (win, "OS"); break;
+        case 3: jn_window_open_topic (win, paging); break;
+        case 4: click_row (win, "DSA"); break;
+        default: break;
+        }
+      g_autofree char *got = sidebar (win);
+      jr_case (&c, t[i].step, g_strcmp0 (got, t[i].want) == 0, "Expected \"%s\"  Got \"%s\"", t[i].want, got);
+    }
+  jr_cases_done (&c);
+  gtk_window_destroy (GTK_WINDOW (win));
+  pump (50);
+  remove_tree (dir);
+}
+
 /* ---- memory: nothing keeps growing ---------------------------------------- */
 
 static gsize
@@ -1485,6 +1562,7 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/save-failure", test_save_failure);
   g_test_add_func ("/notes-ui/backups", test_backups);
   g_test_add_func ("/notes-ui/sidebar-highlight", test_sidebar_highlight);
+  g_test_add_func ("/notes-ui/sidebar-folds", test_sidebar_folds);
   g_test_add_func ("/notes-ui/no-growth", test_no_growth);
   return g_test_run ();
 }
