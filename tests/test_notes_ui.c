@@ -991,6 +991,14 @@ read_file (const char *path)
   return g_file_get_contents (path, &text, NULL, NULL) ? text : NULL;
 }
 
+/* Does the file at `path` exist and hold `needle`? */
+static gboolean
+file_has (const char *path, const char *needle)
+{
+  g_autofree char *text = read_file (path);
+  return text != NULL && strstr (text, needle) != NULL;
+}
+
 static void
 remove_tree (const char *path)
 {
@@ -1044,18 +1052,15 @@ test_save_failure (void)
   const char *rescue = jn_window_rescue_path (win);
   g_assert_nonnull (rescue);
   g_assert_true (g_str_has_prefix (rescue, unsaved));
-  g_autofree char *copy = read_file (rescue);
-  g_assert_nonnull (copy);
-  g_assert_nonnull (strstr (copy, "- sift down\n- O(log n)"));
-  g_assert_nonnull (strstr (copy, "Subject: DSA"));
+  g_assert_true (file_has (rescue, "- sift down\n- O(log n)"));
+  g_assert_true (file_has (rescue, "Subject: DSA"));
 
   /* More typing: the same rescue file, kept up to date. */
   type (e, "⏎- heapify");
   jn_window_save (win);
   g_autofree char *rescue2 = g_strdup (jn_window_rescue_path (win));
   g_assert_cmpstr (rescue2, ==, rescue);
-  g_autofree char *copy2 = read_file (rescue2);
-  g_assert_nonnull (strstr (copy2, "- O(log n)\n- heapify"));
+  g_assert_true (file_has (rescue2, "- O(log n)\n- heapify"));
 
   /* Nowhere for a rescue copy either: Notes will not close. */
   g_autofree char *moved = g_strconcat (exports, ".away", NULL);
@@ -1103,8 +1108,7 @@ test_save_failure (void)
   for (const char *n = g_dir_read_name (list); n != NULL; n = g_dir_read_name (list))
     {
       g_autofree char *f = g_build_filename (unsaved, n, NULL);
-      g_autofree char *text = read_file (f);
-      found |= text != NULL && strstr (text, "- last\n- closing now") != NULL;
+      found |= file_has (f, "- last\n- closing now");
     }
   g_assert_true (found);
 
