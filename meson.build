@@ -214,6 +214,14 @@ notes_drive_net_dep = declare_dependency(
   link_with : notes_drive_net_lib,
   dependencies : [notes_drive_dep, soup_dep],
 )
+# Notes' side: signing in, the keyring, starting journal-drive.
+notes_drive_client_lib = static_library('notes-drive-client', 'src/notes/drive/driveclient.c',
+  dependencies : [notes_drive_dep, soup_dep, secret_dep],
+)
+notes_drive_client_dep = declare_dependency(
+  link_with : notes_drive_client_lib,
+  dependencies : [notes_drive_dep, soup_dep, secret_dep],
+)
 drive_exe = executable('journal-drive', 'src/notes/drive/helper.c',
   dependencies : [notes_drive_net_dep, notes_core_dep],
   install : true,
