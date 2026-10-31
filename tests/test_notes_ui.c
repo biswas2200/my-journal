@@ -5,6 +5,8 @@
  * to the editor's key handler, then (if it does not take them) do what
  * GTK would. The whole test runs inside Notes' file lock, as the real
  * program does. */
+#include <malloc.h>
+#include <stdlib.h>
 #include <string.h>
 #include <glib/gstdio.h>
 #include <gtk/gtk.h>
@@ -16,6 +18,12 @@
 #include "notes_window.h"
 #include "notesjail.h"
 #include "programs.h"
+
+#if defined(__SANITIZE_ADDRESS__)
+#define RUNNING_ON_SANITIZER 1
+#else
+#define RUNNING_ON_SANITIZER 0
+#endif
 
 static gboolean
 stop_waiting (gpointer flag)
@@ -1340,6 +1348,108 @@ test_sidebar_highlight (void)
   remove_tree (dir);
 }
 
+/* ---- memory: nothing keeps growing ---------------------------------------- */
+
+static gsize
+heap_in_use (void)
+{
+  malloc_trim (0);
+  struct mallinfo2 mi = mallinfo2 ();
+  return mi.uordblks + mi.hblkhd;
+}
+
+typedef struct {
+  char  *path, *exports, *backups;
+  gint64 heaps, tries, first, second;
+} Tour;
+
+/* One visit to everything Notes does, from opening a window to closing
+ * it: two topics, typing and saving, Markdown mode with its preview, an
+ * enhanced copy and the topic reference, export, a new session left
+ * empty (dropped), the study clock, a backup. It changes no counts, so
+ * whatever it leaves behind is a leak, not more notes. */
+static void
+tour (Tour *t)
+{
+  JnDb *db = jn_db_open (t->path, NULL);
+  JnWindow *win = jn_window_new (NULL, db, t->exports);
+  jn_window_set_backup_dir (win, t->backups);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (30);
+  JnEditor *e = jn_window_editor (win);
+
+  jn_window_open_session (win, t->first);
+  jn_editor_focus (e);
+  type (e, "x⌫");
+  jn_window_save (win);
+  jn_editor_set_markdown (e, TRUE);
+  pump (300); /* the preview */
+  jn_editor_set_markdown (e, FALSE);
+  jn_window_open_session (win, t->second); /* has an enhanced copy */
+  pump (30);
+  jn_window_open_reference (win, t->tries);
+  pump (30);
+  g_autofree char *file = jn_window_export (win, NULL);
+  jn_window_open_topic (win, t->heaps);
+  type (e, "y⌫"); /* a new session, left empty: dropped on leaving */
+  JnClockBar *clock = jn_window_clock_bar (win);
+  jn_clock_bar_toggle (clock);
+  jn_clock_bar_toggle (clock);
+  jn_clock_bar_reset (clock);
+  click_row (win, "Tries");
+  click_row (win, "DSA");
+
+  gtk_window_close (GTK_WINDOW (win));
+  pump (30);
+}
+
+static void
+test_no_growth (void)
+{
+  if (RUNNING_ON_SANITIZER && g_getenv ("JR_TOURS") == NULL)
+    {
+      g_test_skip ("heap numbers are not meaningful under a sanitizer");
+      return;
+    }
+  if (g_str_equal (G_OBJECT_TYPE_NAME (gdk_display_get_default ()), "GdkBroadwayDisplay"))
+    {
+      g_test_skip ("Broadway keeps per-surface caches; heap numbers need a real compositor");
+      return;
+    }
+  g_autofree char *dir = g_dir_make_tmp ("notes-ui-XXXXXX", NULL);
+  Tour t = { g_build_filename (dir, "notes.db", NULL), g_build_filename (dir, "exports", NULL),
+             g_build_filename (dir, "backups", NULL), 0, 0, 0, 0 };
+  JnDb *db = jn_db_open (t.path, NULL);
+  gint64 dsa = jn_db_add_subject (db, "DSA");
+  t.heaps = jn_db_add_topic (db, dsa, "Heaps");
+  t.tries = jn_db_add_topic (db, dsa, "Tries");
+  t.first = jn_db_start_session (db, t.heaps, 100);
+  jn_db_save_session (db, t.first, "# Heaps\n- sift down\n  - O(log n)\n\u2192 heapify", "https://a.example", 200);
+  t.second = jn_db_start_session (db, t.tries, 300);
+  jn_db_save_session (db, t.second, "# Tries\n- prefix tree", "", 400);
+  jn_db_set_enhanced (db, t.second, "## Tries\n\n- a tree of prefixes [1]\n\n```c\nint x;\n```\n", "test", 500);
+  jn_db_close (db);
+
+  for (int i = 0; i < 5; i++) /* GTK's own caches settle */
+    tour (&t);
+  gsize before = heap_in_use ();
+  int tours = g_getenv ("JR_TOURS") ? atoi (g_getenv ("JR_TOURS")) : 30;
+  for (int i = 0; i < tours; i++)
+    tour (&t);
+  gsize after = heap_in_use ();
+  g_test_message ("heap before %zu KiB, after %d tours %zu KiB", before / 1024, tours, after / 1024);
+  /* 30 tours open and close 30 windows; allow only cache noise. */
+  g_assert_cmpint ((gssize) after - (gssize) before, <, 256 * 1024);
+
+  db = jn_db_open (t.path, NULL);
+  g_assert_cmpint (sessions_of (db, t.heaps), ==, 1); /* nothing piled up either */
+  jn_db_close (db);
+  g_free (t.path);
+  g_free (t.exports);
+  g_free (t.backups);
+  remove_tree (dir);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -1371,5 +1481,6 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/save-failure", test_save_failure);
   g_test_add_func ("/notes-ui/backups", test_backups);
   g_test_add_func ("/notes-ui/sidebar-highlight", test_sidebar_highlight);
+  g_test_add_func ("/notes-ui/no-growth", test_no_growth);
   return g_test_run ();
 }

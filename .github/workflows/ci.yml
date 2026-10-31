@@ -62,6 +62,33 @@ jobs:
         if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@v8
 
+  sanity:
+    # The built programs, installed into a throwaway folder and run on
+    # throwaway profiles, next to the last release: they start, close
+    # cleanly, and read each other's notes (tools/sanity.sh).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the release tags to compare with
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build pkg-config gcc libgtk-4-dev libgtk-4-bin \
+            libsqlite3-dev libsodium-dev libsecret-1-dev libseccomp-dev libsoup-3.0-dev libjson-glib-dev librsvg2-dev mutter dbus dbus-daemon
+
+      - name: Sanity check against the last release
+        shell: bash
+        run: |
+          set -o pipefail
+          tools/sanity.sh 2>&1 | tee sanity.log
+
+      - name: Report failures
+        if: failure()
+        run: grep -hE '^FAIL|^        ' sanity.log | head -30 | sed 's/^/::error::/' || true
+
   sanitizers:
     runs-on: ubuntu-24.04
     steps:

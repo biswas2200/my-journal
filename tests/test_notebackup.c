@@ -148,6 +148,17 @@ test_copy (void)
   g_autofree char *in_copy = body_in (copy, session);
   g_assert_cmpstr (in_copy, ==, "# Idea\n- pre[0] = 0");
 
+  /* A copy cut off before (a kill) left its file and SQLite's journal
+   * beside it: the next copy clears them and is sound. */
+  g_autofree char *stale_journal = g_strconcat (copy, ".tmp-journal", NULL);
+  g_assert_true (g_file_set_contents (tmp, "half a copy", -1, NULL));
+  g_assert_true (g_file_set_contents (stale_journal, "a journal from a copy that was cut off", -1, NULL));
+  g_assert_true (jn_db_copy_to (db, copy, NULL));
+  g_assert_false (g_file_test (tmp, G_FILE_TEST_EXISTS));
+  g_assert_false (g_file_test (stale_journal, G_FILE_TEST_EXISTS));
+  g_autofree char *after_stale = body_in (copy, session);
+  g_assert_cmpstr (after_stale, ==, "# Idea\n- pre[0] = 0");
+
   /* A later copy replaces it with the later text. */
   g_assert_true (jn_db_save_session (db, session, "# Idea\n- pre[0] = 0\n- more", "", 200));
   g_assert_true (jn_db_copy_to (db, copy, NULL));

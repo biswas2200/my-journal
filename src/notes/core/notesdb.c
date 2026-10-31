@@ -547,13 +547,27 @@ copy_failed (GError **error, const char *what, const char *why)
   return FALSE;
 }
 
+/* The copy in progress and SQLite's side files for it. A copy cut off
+ * half-way (a crash, a kill) leaves them; a stale "-journal" beside a
+ * fresh copy would be taken as unfinished work and rolled into it. */
+static void
+remove_partial (const char *tmp)
+{
+  static const char *const sides[] = { "", "-journal", "-wal", "-shm" };
+  for (gsize i = 0; i < G_N_ELEMENTS (sides); i++)
+    {
+      g_autofree char *f = g_strconcat (tmp, sides[i], NULL);
+      g_remove (f);
+    }
+}
+
 gboolean
 jn_db_copy_to (JnDb *db, const char *path, GError **error)
 {
   if (!quick_check (db->h))
     return copy_failed (error, "the notes file failed its check", "the last good backup is kept");
   g_autofree char *tmp = g_strconcat (path, ".tmp", NULL);
-  g_remove (tmp);
+  remove_partial (tmp);
   /* Made private before SQLite writes a byte into it. */
   int fd = g_open (tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
   if (fd < 0)
@@ -579,7 +593,7 @@ jn_db_copy_to (JnDb *db, const char *path, GError **error)
   sqlite3_close (to);
   if (!sound)
     {
-      g_remove (tmp);
+      remove_partial (tmp);
       return copy_failed (error, "copying", why);
     }
   /* On disk before it takes the old copy's place. */
@@ -590,9 +604,10 @@ jn_db_copy_to (JnDb *db, const char *path, GError **error)
   if (!synced || g_rename (tmp, path) != 0)
     {
       int e = errno;
-      g_remove (tmp);
+      remove_partial (tmp);
       return copy_failed (error, path, g_strerror (e));
     }
+  remove_partial (tmp); /* its "-journal", if SQLite left one */
   return TRUE;
 }
 

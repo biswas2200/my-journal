@@ -361,7 +361,20 @@ ASAN_OPTIONS=detect_leaks=0 meson test -C build-asan --suite ui
 # Valgrind (applied to the test binaries, not the runner script)
 JR_TEST_WRAPPER='valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=1' \
   meson test -C build --suite core
+
+# Sanity check: this tree and the last release, installed side by side in
+# a throwaway folder and run on throwaway profiles (CI runs it too)
+tools/sanity.sh            # or: tools/sanity.sh v0.1.0
 ```
+
+The sanity check prints one PASS or FAIL line per check:
+- both builds report their version;
+- the Journal starts hardened and closes cleanly;
+- Notes opens and closes cleanly, with its opening time shown;
+- notes written by the last release open in this tree with every row
+  intact, get a backup, and open in the last release again.
+
+Run it before every release.
 
 Every test writes its journals and keys into a private temporary folder
 that is deleted when the test ends, even if it crashes
