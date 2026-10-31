@@ -22,6 +22,7 @@ Markdown and SVG diagrams the AI writes after reading those pages.
 | `textify` | a fetched web page (any bytes) and a length limit | valid UTF-8, no control characters but newline and tab; a limit gives the start of the same text, cut on a character boundary |
 | `aiproto` | Gemini's answer, the sign-in token answer, the ADC file, the messages between Notes and its AI helper | text that comes out is valid UTF-8; errors never hold the refresh token; a request or answer written and read again comes back the same |
 | `noteline` | the lines of a stored note | any line stored as any kind reads back as that kind and text; any stored line reads as a kind and stays it |
+| `drive` | Google Drive's and Google sign-in's answers, the client file, the browser's return, Notes ⇄ Drive helper messages (line by line too) | text out is valid UTF-8; no error holds a token; a request read, written and read again is the same; a text is the same as itself |
 
 ## On GitHub
 

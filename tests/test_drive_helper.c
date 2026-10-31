@@ -50,7 +50,7 @@ backup (Topic *topics, gsize n, int allowed_port)
   g_autoptr (GError) error = NULL;
   g_assert_true (g_subprocess_communicate_utf8 (p, json, NULL, &out, NULL, &error));
   JnDriveAnswer a = { 0 };
-  g_assert_true (jn_drive_answer_from_json (out, -1, &a, NULL));
+  g_assert_true (jn_drive_answer_from_lines (out, &a));
   if (a.root != NULL)
     {
       g_free (root);
@@ -160,6 +160,29 @@ test_backups (void)
            g_strcmp0 (fg_file (t[0].folder)->parent, root) == 0, "root %s", root);
   jn_drive_answer_clear (&a);
 
+  /* Notes lost its records (an old notes.db restored, or a Doc made just
+   * as Notes stopped the helper): nothing is made twice; the Docs and
+   * folders it made before are found and updated. */
+  Topic forgot[] = {
+    { "DSA", "Prefix sum", t[0].markdown, NULL, NULL },
+    { "Operating Systems", "Paging", "# Paging\n\n- page table\n- TLB", NULL, NULL },
+  };
+  g_autofree char *kept_root = g_strdup (root);
+  g_clear_pointer (&root, g_free);
+  int files_before = fg_count ();
+  a = backup (forgot, 2, fg_port ());
+  jr_case (&c, "records lost: found again, nothing made twice", fg_count () == files_before &&
+           g_strcmp0 (forgot[0].doc, t[0].doc) == 0 && g_strcmp0 (forgot[1].doc, t[2].doc) == 0 &&
+           g_strcmp0 (root, kept_root) == 0 && g_strcmp0 (fg_file (t[2].doc)->content, forgot[1].markdown) == 0 &&
+           a.results[0].verified && a.results[1].verified, "files %d -> %d, doc %s vs %s", files_before, fg_count (),
+           forgot[0].doc, t[0].doc);
+  jn_drive_answer_clear (&a);
+  for (gsize i = 0; i < G_N_ELEMENTS (forgot); i++)
+    {
+      g_free (forgot[i].doc);
+      g_free (forgot[i].folder);
+    }
+
   /* A Doc that reads back with a line missing: not called backed up. */
   g_mutex_lock (&fg_lock);
   fg_lossy_id = g_strdup (t[0].doc);
@@ -229,7 +252,7 @@ test_bad_request (void)
   g_autofree char *out = NULL;
   g_assert_true (g_subprocess_communicate_utf8 (p, "{\"nonsense\":1}", NULL, &out, NULL, NULL));
   JnDriveAnswer a = { 0 };
-  g_assert_true (jn_drive_answer_from_json (out, -1, &a, NULL));
+  g_assert_true (jn_drive_answer_from_lines (out, &a));
   g_assert_nonnull (a.error);
   g_assert_nonnull (strstr (a.error, "not valid"));
   jn_drive_answer_clear (&a);

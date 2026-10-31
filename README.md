@@ -189,7 +189,11 @@ My Drive
   changed by a backup. A backup counts only after Notes has read the
   Doc back and found the same text; one that does not match, a full
   Drive or no connection is said in plain words, and the topic stays
-  marked for the next backup.
+  marked for the next backup. Each topic is recorded the moment it is
+  done, so a backup cut short (Notes closing after its minute) keeps
+  what it finished and the next one goes on from there; before making
+  a folder or Doc, Notes looks for one it made earlier, so nothing is
+  ever made twice, even if Notes lost track of it.
 - **Only you.** Notes asks Google only for `drive.file`: it can see and
   change only the files it made, never the rest of your Drive. The Docs
   are in your My Drive and shared with no one; after every backup Notes
@@ -380,7 +384,12 @@ what goes where. How it stays contained:
   (never `/tmp` or another folder others can write to). `~/.local/share/journal` and the login keyring are on no list, so
   opening, listing, linking or renaming them fails with `EACCES`, also
   through symlinks or `/proc/self/root`, and for every program Notes
-  starts. Without that lock Notes opens no notes.
+  starts. Without that lock Notes opens no notes. That lock is about
+  files: like every program in your session, Notes could still ask the
+  keyring service (over D-Bus) for any secret in your unlocked login
+  keyring, the Journal's "Journal PIN key" included. Notes only asks
+  for its own Drive sign-in; that key alone opens nothing without the
+  PIN and the journal file, which Notes cannot read.
 - **What the app cannot protect against:** someone who already runs
   programs as you (malware, a stolen login) can wait for you to unlock,
   or swap the launcher for a fake one. An unencrypted disk or swap file

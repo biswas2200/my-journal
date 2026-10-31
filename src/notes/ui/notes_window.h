@@ -62,7 +62,8 @@ const char *jn_window_studied      (JnWindow *win);
  * 14:05", "Changed since the last backup (1 Nov)", "Not backed up yet"),
  * a topic that needs it is marked in the list, and closing Notes first
  * backs up whatever changed (the window hides meanwhile, a minute at
- * most). */
+ * most). Each topic is recorded the moment its backup is done, so a
+ * backup cut short loses nothing it made. */
 void      jn_window_set_drive      (JnWindow *win, JnBackup *backup);
 void      jn_window_drive_sign_in  (JnWindow *win);
 void      jn_window_drive_sign_out (JnWindow *win);
@@ -71,6 +72,9 @@ void      jn_window_drive_sign_out (JnWindow *win);
 gboolean  jn_window_backup_topic   (JnWindow *win);
 gboolean  jn_window_backup_all     (JnWindow *win);
 gboolean  jn_window_is_backing_up  (JnWindow *win);
+/* How long closing waits for the backup (60 s; tests use less). What is
+ * done by then is kept; the rest stays marked for the next backup. */
+void      jn_window_set_close_limit (JnWindow *win, guint ms);
 /* The open topic's backup state, as shown ("" when not signed in and
  * never backed up). */
 const char *jn_window_backup_state (JnWindow *win);

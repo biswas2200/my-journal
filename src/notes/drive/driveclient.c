@@ -385,49 +385,115 @@ google_sign_out (JnBackup *self)
 
 typedef struct {
   Google        *g;
-  JnDriveRequest req; /* strings owned here */
+  JnDriveRequest req;      /* strings owned here */
   GCancellable  *cancel;
+  JnBackupEach   each;
   JnBackupDone   done;
   gpointer       user;
   GSubprocess   *proc;
+  GDataInputStream *lines; /* the helper's answer, line by line */
+  char          *json;     /* the request, wiped once written */
+  GArray        *results;  /* JnDriveResult, every one handed to `each` */
+  char          *root, *end_error;
+  gboolean       ended;
 } Job;
 
 static void
-job_finish (Job *job, const JnDriveAnswer *answer, const char *error)
+job_free (Job *job)
 {
-  job->done (answer, error, job->user);
   jn_drive_request_clear (&job->req);
+  if (job->json != NULL)
+    memset (job->json, 0, strlen (job->json)); /* it held the token */
+  g_free (job->json);
+  for (guint i = 0; job->results != NULL && i < job->results->len; i++)
+    jn_drive_result_clear (&g_array_index (job->results, JnDriveResult, i));
+  if (job->results != NULL)
+    g_array_unref (job->results);
+  g_free (job->root);
+  g_free (job->end_error);
+  g_clear_object (&job->lines);
   g_clear_object (&job->cancel);
   g_clear_object (&job->proc);
   g_free (job);
 }
 
+/* Before the helper ran: only an error. */
 static void
-on_helper_done (GObject *src, GAsyncResult *res, gpointer data)
+job_fail (Job *job, const char *error)
+{
+  job->done (NULL, error, job->user);
+  job_free (job);
+}
+
+/* The helper is done (or was stopped): everything it reported, and why
+ * it stopped early if it did. */
+static void
+job_end (Job *job, const char *stopped)
+{
+  JnDriveAnswer a = { job->root, (char *) stopped, (JnDriveResult *) job->results->data, job->results->len };
+  if (stopped == NULL && !job->ended)
+    a.error = (char *) "The Drive helper stopped before it finished; the topics it did are kept, the others stay "
+                       "marked for the next backup.";
+  else if (stopped == NULL)
+    a.error = job->end_error;
+  /* An expired or revoked sign-in: forget it, so the window offers Sign
+   * in again. */
+  if (a.error != NULL && strstr (a.error, "Sign in") != NULL)
+    forget (job->g);
+  job->done (&a, NULL, job->user);
+  job_free (job);
+}
+
+static void
+on_line (GObject *src, GAsyncResult *res, gpointer data)
 {
   Job *job = data;
-  g_autofree char *out = NULL;
   g_autoptr (GError) error = NULL;
-  if (!g_subprocess_communicate_utf8_finish (G_SUBPROCESS (src), res, &out, NULL, &error))
+  gsize len = 0;
+  g_autofree char *line = g_data_input_stream_read_line_finish_utf8 (G_DATA_INPUT_STREAM (src), res, &len, &error);
+  if (line == NULL)
     {
-      job_finish (job, NULL, g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
-                               ? "Stopped." : "The Drive helper did not answer.");
+      if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        {
+          /* Not only stop listening: stop the helper, so it makes no Doc
+           * that Notes would not hear of. */
+          g_subprocess_force_exit (job->proc);
+          job_end (job, "Stopped. The topics already done are kept; the others stay marked for the next backup.");
+        }
+      else
+        job_end (job, NULL); /* end of its answer */
       return;
     }
-  JnDriveAnswer a = { 0 };
-  if (!jn_drive_answer_from_json (out, -1, &a, NULL))
-    job_finish (job, NULL, "The Drive helper stopped without an answer.");
-  else
+  JnDriveResult r;
+  char *root = NULL, *err = NULL;
+  JnDriveLine kind = jn_drive_line_parse (line, (gssize) len, &r, &root, &err);
+  if (root != NULL)
     {
-      /* An expired sign-in: forget it, so the window offers Sign in. */
-      gboolean expired = a.error != NULL && a.n_results == 0;
-      if (expired)
-        expired = strstr (a.error, "Sign in") != NULL;
-      if (expired)
-        forget (job->g);
-      job_finish (job, &a, NULL);
+      g_free (job->root);
+      job->root = root;
     }
-  jn_drive_answer_clear (&a);
+  if (kind == JN_DRIVE_LINE_RESULT)
+    {
+      g_array_append_val (job->results, r);
+      job->each (&r, job->root, job->user);
+    }
+  else if (kind == JN_DRIVE_LINE_END)
+    {
+      job->ended = TRUE;
+      g_free (job->end_error);
+      job->end_error = err;
+    }
+  g_data_input_stream_read_line_async (job->lines, G_PRIORITY_DEFAULT, job->cancel, on_line, job);
+}
+
+static void
+on_request_written (GObject *src, GAsyncResult *res, gpointer data)
+{
+  Job *job = data;
+  g_output_stream_write_all_finish (G_OUTPUT_STREAM (src), res, NULL, NULL);
+  g_output_stream_close (G_OUTPUT_STREAM (src), NULL, NULL); /* the helper reads to the end */
+  memset (job->json, 0, strlen (job->json));
+  g_clear_pointer (&job->json, g_free);
 }
 
 static void
@@ -450,12 +516,15 @@ run_helper (Job *job)
   g_object_unref (l);
   if (job->proc == NULL)
     {
-      job_finish (job, NULL, "The Drive helper is missing (reinstall Journal).");
+      job_fail (job, "The Drive helper is missing (reinstall Journal).");
       return;
     }
-  g_autofree char *json = jn_drive_request_to_json (&job->req);
-  g_subprocess_communicate_utf8_async (job->proc, json, job->cancel, on_helper_done, job);
-  memset (json, 0, strlen (json)); /* it held the token */
+  job->results = g_array_new (FALSE, TRUE, sizeof (JnDriveResult));
+  job->json = jn_drive_request_to_json (&job->req);
+  g_output_stream_write_all_async (g_subprocess_get_stdin_pipe (job->proc), job->json, strlen (job->json),
+                                   G_PRIORITY_DEFAULT, NULL, on_request_written, job);
+  job->lines = g_data_input_stream_new (g_subprocess_get_stdout_pipe (job->proc));
+  g_data_input_stream_read_line_async (job->lines, G_PRIORITY_DEFAULT, job->cancel, on_line, job);
 }
 
 static void
@@ -471,7 +540,7 @@ on_token (GObject *src, GAsyncResult *res, gpointer data)
                              ? g_strdup ("Stopped.")
                              : g_strdup_printf ("Google could not be reached (%s). Your notes are safe on this laptop; "
                                                 "the backup will be tried again.", error->message);
-      job_finish (job, NULL, m);
+      job_fail (job, m);
       return;
     }
   gsize len = 0;
@@ -482,7 +551,7 @@ on_token (GObject *src, GAsyncResult *res, gpointer data)
     {
       if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED))
         forget (job->g); /* revoked or expired: offer Sign in again */
-      job_finish (job, NULL, error->message);
+      job_fail (job, error->message);
       return;
     }
   Google *g = job->g;
@@ -496,11 +565,12 @@ on_token (GObject *src, GAsyncResult *res, gpointer data)
 
 static void
 google_run (JnBackup *self, const char *root, const JnDriveItem *items, gsize n_items, GCancellable *cancel,
-            JnBackupDone done, gpointer user)
+            JnBackupEach each, JnBackupDone done, gpointer user)
 {
   Google *g = (Google *) self;
   Job *job = g_new0 (Job, 1);
   job->g = g;
+  job->each = each;
   job->done = done;
   job->user = user;
   job->cancel = cancel != NULL ? g_object_ref (cancel) : g_cancellable_new ();
@@ -517,7 +587,7 @@ google_run (JnBackup *self, const char *root, const JnDriveItem *items, gsize n_
   const char *refresh = refresh_token (g);
   if (refresh == NULL)
     {
-      job_finish (job, NULL, "Not signed in to Google Drive. Sign in first.");
+      job_fail (job, "Not signed in to Google Drive. Sign in first.");
       return;
     }
   if (g->access != NULL && g_get_monotonic_time () / G_USEC_PER_SEC < g->access_until)
@@ -530,7 +600,7 @@ google_run (JnBackup *self, const char *root, const JnDriveItem *items, gsize n_
   g_autoptr (GError) error = NULL;
   if (!read_client (g, &c, &error))
     {
-      job_finish (job, NULL, error->message);
+      job_fail (job, error->message);
       return;
     }
   g_autofree char *form = jn_oauth_refresh_form (&c, refresh);

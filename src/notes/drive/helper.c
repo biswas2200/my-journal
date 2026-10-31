@@ -19,20 +19,31 @@
 #define MAX_REQUEST (512 * 1024 * 1024)
 #define DRIVE_TIMEOUT 120
 
-static int
-answer (const JnDriveAnswer *a)
+/* One line per topic, written out at once (driveproto.h). */
+static void
+write_result (const JnDriveResult *r, const char *root, gpointer user)
 {
-  g_autofree char *json = jn_drive_answer_to_json (a);
-  fputs (json, stdout);
+  (void) user;
+  g_autofree char *line = jn_drive_result_line (r, root);
+  fputs (line, stdout);
+  fputc ('\n', stdout);
   fflush (stdout);
-  return a->error != NULL ? 1 : 0;
+}
+
+static int
+finish (const char *root, const char *error)
+{
+  g_autofree char *line = jn_drive_end_line (root, error);
+  fputs (line, stdout);
+  fputc ('\n', stdout);
+  fflush (stdout);
+  return error != NULL ? 1 : 0;
 }
 
 static int
 fail (const char *error)
 {
-  JnDriveAnswer a = { NULL, (char *) error, NULL, 0 };
-  return answer (&a);
+  return finish (NULL, error);
 }
 
 static char *
@@ -82,8 +93,8 @@ main (void)
 
   SoupSession *session = soup_session_new_with_options ("timeout", DRIVE_TIMEOUT, "user-agent",
                                                         "Journal-Notes/1.0 (backup)", "proxy-resolver", NULL, NULL);
-  JnDriveAnswer a = jn_drive_sync (session, &req);
-  int rc = answer (&a);
+  JnDriveAnswer a = jn_drive_sync (session, &req, write_result, NULL);
+  int rc = finish (a.root, a.error);
   jn_drive_answer_clear (&a);
   jn_drive_request_clear (&req);
   g_object_unref (session);

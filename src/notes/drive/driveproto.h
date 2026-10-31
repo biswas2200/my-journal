@@ -10,13 +10,16 @@
  * Doc by Google's id, never by name, so renaming or moving them in Drive
  * changes nothing; one deleted (or in the bin) is made again.
  *
- *   Notes  --request-->  journal-drive  --answer-->  Notes   (JSON on pipes)
+ *   Notes  --request-->  journal-drive  --lines-->  Notes   (JSON on pipes)
  *
  * The request carries a one-hour access token, never the sign-in; each
  * topic goes as Markdown (noteexport.h), which Drive turns into a Doc
- * with its headings, lists and links. The answer says, per topic, where
- * its Doc is, whether the Doc read back holds the same text, and whether
- * anyone but you can open it. */
+ * with its headings, lists and links. The answer comes back one line per
+ * topic, as soon as that topic is done (where its Doc is, whether it
+ * read back with the same text, whether anyone but you can open it),
+ * then an end line: so a backup cut off half-way (Notes closing, a lost
+ * connection) still tells Notes about every Doc it made, and the next
+ * backup goes on from there instead of making them again. */
 #pragma once
 
 #include <glib.h>
@@ -78,6 +81,26 @@ char    *jn_drive_answer_to_json   (const JnDriveAnswer *a);
 gboolean jn_drive_answer_from_json (const char *json, gssize len, JnDriveAnswer *out, GError **error);
 void     jn_drive_answer_clear     (JnDriveAnswer *a);
 
+/* ---- the helper's answer, line by line ------------------------------------------- */
+
+/* One topic's result (with the Notes folder, once known), as one line of
+ * JSON without a newline. */
+char    *jn_drive_result_line      (const JnDriveResult *r, const char *root);
+/* The last line: the Notes folder, and why the run stopped (or NULL). */
+char    *jn_drive_end_line         (const char *root, const char *error);
+
+typedef enum {
+  JN_DRIVE_LINE_BAD,    /* not a line of the helper's answer */
+  JN_DRIVE_LINE_RESULT, /* *result filled in (clear it), *root if given */
+  JN_DRIVE_LINE_END,    /* *root and *error, if given */
+} JnDriveLine;
+/* Reads one line; *root and *error are newly allocated or NULL. */
+JnDriveLine jn_drive_line_parse   (const char *line, gssize len, JnDriveResult *result, char **root, char **error);
+void     jn_drive_result_clear     (JnDriveResult *r);
+/* A whole answer from its lines (tests, and Notes at the end): every
+ * result in order; without an end line the run counts as cut off. */
+gboolean jn_drive_answer_from_lines (const char *text, JnDriveAnswer *out);
+
 /* ---- Drive's own messages ------------------------------------------------------ */
 
 /* {"name": …, "mimeType": …, "parents": [parent]} for a new file. */
@@ -92,6 +115,15 @@ gboolean jn_drive_parse_file        (const char *json, gssize len, char **id, gb
  * is TRUE when anyone besides the owner, or "anyone with the link", has
  * a role on the file. */
 gboolean jn_drive_parse_permissions (const char *json, gssize len, gboolean *shared);
+/* The search for a file Notes made earlier: `name` of type `mime` in
+ * `parent` ("root": My Drive), not in the bin. Quotes and backslashes in
+ * the name are escaped as Drive's query language wants. The result is
+ * the "q" parameter, URL-escaped. (With drive.file, Drive only ever
+ * shows Notes the files Notes made.) */
+char    *jn_drive_find_query        (const char *name, const char *mime, const char *parent);
+/* The first file of a files.list answer (fields files(id,webViewLink)),
+ * or FALSE if none. */
+gboolean jn_drive_parse_first       (const char *json, gssize len, char **id, char **link);
 /* Drive's error answer (HTTP `status`) in plain words; never NULL. */
 char    *jn_drive_error             (const char *json, gssize len, int status);
 

@@ -19,8 +19,12 @@
 #include "driveproto.h"
 
 typedef void (*JnSignInDone) (gboolean ok, const char *error, gpointer user);
-/* `answer` when the helper answered (its results, even if some failed),
- * else `error`; both only for the call. */
+/* One topic's result, as soon as the helper has it (record it now: a
+ * backup cut off later still made this Doc). `root` is the Notes folder
+ * once known. */
+typedef void (*JnBackupEach) (const JnDriveResult *result, const char *root, gpointer user);
+/* At the end: every result again, and why it stopped early (answer->error)
+ * or did not run at all (`error`, answer NULL); only for the call. */
 typedef void (*JnBackupDone) (const JnDriveAnswer *answer, const char *error, gpointer user);
 
 typedef struct JnBackup JnBackup;
@@ -31,9 +35,10 @@ struct JnBackup {
   void     (*sign_in)     (JnBackup *self, GCancellable *cancel, JnSignInDone done, gpointer user);
   void     (*sign_out)    (JnBackup *self);
   /* Backs up `items` (copied) into the Notes folder `root` (NULL: none
-   * yet). */
+   * yet). Cancelling stops the helper too; what it finished was already
+   * handed to `each`. */
   void     (*run)         (JnBackup *self, const char *root, const JnDriveItem *items, gsize n_items,
-                           GCancellable *cancel, JnBackupDone done, gpointer user);
+                           GCancellable *cancel, JnBackupEach each, JnBackupDone done, gpointer user);
   void     (*free)        (JnBackup *self);
 };
 

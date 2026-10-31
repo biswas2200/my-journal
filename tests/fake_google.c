@@ -16,6 +16,7 @@ gboolean fg_bad_token;
 char *fg_last_verifier, *fg_last_redirect, *fg_revoked;
 int fg_token_calls;
 gboolean fg_refresh_revoked;
+int fg_delay_ms;
 
 /* ---- the fake sign-in service ------------------------------------------------- */
 
@@ -152,6 +153,63 @@ fg_add_file (const char *name, const char *mime, const char *parent, const char 
   return f;
 }
 
+/* The value of `key = '...'` (or `'...' in parents` for key NULL) in a
+ * Drive query, unescaped. */
+static char *
+fg_query_value (const char *q, const char *key)
+{
+  const char *at;
+  if (key != NULL)
+    {
+      g_autofree char *pre = g_strdup_printf ("%s = '", key);
+      at = strstr (q, pre);
+      if (at == NULL)
+        return NULL;
+      at += strlen (pre);
+    }
+  else
+    {
+      at = strstr (q, "' in parents");
+      if (at == NULL)
+        return NULL;
+      while (at > q && !(at[-1] == '\'' && (at - 1 == q || at[-2] != '\\')))
+        at--;
+    }
+  GString *v = g_string_new (NULL);
+  for (; *at != '\0' && *at != '\''; at++)
+    {
+      if (*at == '\\' && at[1] != '\0')
+        at++;
+      g_string_append_c (v, *at);
+    }
+  return g_string_free (v, FALSE);
+}
+
+/* files.list with a q: the first live file matching name, type, parent. */
+static void
+fg_list (SoupServerMessage *msg, const char *q)
+{
+  g_autofree char *name = fg_query_value (q, "name");
+  g_autofree char *mime = fg_query_value (q, "mimeType");
+  g_autofree char *parent = fg_query_value (q, NULL);
+  GHashTableIter it;
+  gpointer key, value;
+  g_hash_table_iter_init (&it, fg_files);
+  while (g_hash_table_iter_next (&it, &key, &value))
+    {
+      FgFile *f = value;
+      if (!f->trashed && g_strcmp0 (f->name, name) == 0 && g_strcmp0 (f->mime, mime) == 0 &&
+          g_strcmp0 (f->parent, parent) == 0)
+        {
+          g_autofree char *json = g_strdup_printf ("{\"files\":[{\"id\":\"%s\",\"webViewLink\":"
+                                                   "\"https://docs.google.com/document/d/%s/edit\"}]}", f->id, f->id);
+          fg_reply_json (msg, 200, json);
+          return;
+        }
+    }
+  fg_reply_json (msg, 200, "{\"files\":[]}");
+}
+
 static void
 fg_serve (SoupServer *server, SoupServerMessage *msg, const char *path, GHashTable *query, gpointer user)
 {
@@ -164,6 +222,12 @@ fg_serve (SoupServer *server, SoupServerMessage *msg, const char *path, GHashTab
       return;
     }
   fg_requests++;
+  if (fg_delay_ms > 0)
+    {
+      g_mutex_unlock (&fg_lock);
+      g_usleep ((gulong) fg_delay_ms * 1000); /* a slow connection */
+      g_mutex_lock (&fg_lock);
+    }
   const char *method = soup_server_message_get_method (msg);
   SoupMessageHeaders *h = soup_server_message_get_request_headers (msg);
   if (g_strcmp0 (soup_message_headers_get_one (h, "Authorization"), "Bearer " FG_ACCESS) != 0)
@@ -184,7 +248,9 @@ fg_serve (SoupServer *server, SoupServerMessage *msg, const char *path, GHashTab
   const char *ctype = soup_message_headers_get_content_type (h, NULL);
   g_autofree char *full_type = g_strdup (soup_message_headers_get_one (h, "Content-Type"));
 
-  if (strcmp (method, "GET") == 0 && f != NULL && n == 5)
+  if (strcmp (method, "GET") == 0 && !upload && n == 4 && query != NULL && g_hash_table_lookup (query, "q") != NULL)
+    fg_list (msg, g_hash_table_lookup (query, "q"));
+  else if (strcmp (method, "GET") == 0 && f != NULL && n == 5)
     fg_reply_file (msg, f);
   else if (strcmp (method, "GET") == 0 && f != NULL && n == 6 && strcmp (seg[5], "export") == 0)
     {

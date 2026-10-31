@@ -1,0 +1,3 @@
+{"topic":1,"doc":"d1","folder":"f1","link":"https://docs.google.com/d/d1","verified":true,"shared":false,"root":"r1"}
+{"topic":2,"error":"Drive is full","verified":false,"shared":false}
+{"end":true,"root":"r1"}

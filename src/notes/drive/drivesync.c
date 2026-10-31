@@ -82,10 +82,34 @@ live_id (GBytes *reply, guint status, char **link)
   return id;
 }
 
-/* A new folder named `name` in `parent` (NULL: My Drive itself). */
+/* A file Notes made earlier: `name` of type `mime` in `parent` ("root":
+ * My Drive), not in the bin; NULL if there is none. Asked before making
+ * anything, so a Doc whose record Notes lost (a backup stopped just after
+ * Drive made it, an old notes.db restored) is found, not made twice. */
+static char *
+find (Sync *s, const char *name, const char *mime, const char *parent, char **link)
+{
+  g_autofree char *q = jn_drive_find_query (name, mime, parent);
+  g_autofree char *path = g_strdup_printf ("drive/v3/files?q=%s&fields=files(id,webViewLink)&pageSize=1", q);
+  guint status;
+  g_autoptr (GBytes) reply = call (s, "GET", path, NULL, NULL, &status);
+  if (reply == NULL || !ok (status))
+    return NULL;
+  gsize n = 0;
+  const char *data = g_bytes_get_data (reply, &n);
+  char *id = NULL;
+  jn_drive_parse_first (data, (gssize) n, &id, link);
+  return id;
+}
+
+/* A folder named `name` in `parent` (NULL: My Drive itself): the one Notes
+ * made earlier, or a new one. */
 static char *
 make_folder (Sync *s, const char *name, const char *parent, char **error)
 {
+  char *found = find (s, name, JN_DRIVE_FOLDER_MIME, parent != NULL ? parent : "root", NULL);
+  if (found != NULL || s->fatal != NULL)
+    return found;
   g_autofree char *meta = jn_drive_metadata (name, JN_DRIVE_FOLDER_MIME, parent);
   g_autoptr (GBytes) body = g_bytes_new (meta, strlen (meta));
   guint status;
@@ -149,27 +173,42 @@ folder (Sync *s, const JnDriveItem *it, char **error)
   return id;
 }
 
-/* The topic's Doc: replaced in place, or made again in `parent`. */
+/* Replaces the text and name of Doc `doc` in place. Its id, or NULL: gone
+ * or in the bin (*refused stays FALSE: make it again), or Drive refused
+ * (*refused TRUE, *error says why). */
+static char *
+update_doc (Sync *s, const JnDriveItem *it, const char *doc, char **link, gboolean *refused, char **error)
+{
+  g_autofree char *meta = jn_drive_metadata (it->name, NULL, NULL);
+  g_autofree char *type = NULL;
+  g_autoptr (GBytes) body = jn_drive_multipart (meta, it->markdown, &type);
+  g_autofree char *path = g_strdup_printf ("upload/drive/v3/files/%s?uploadType=multipart&" FILE_FIELDS, doc);
+  guint status;
+  g_autoptr (GBytes) reply = call (s, "PATCH", path, type, body, &status);
+  char *id = live_id (reply, status, link);
+  if (id == NULL && s->fatal == NULL && status != 404 && !ok (status))
+    {
+      *refused = TRUE;
+      *error = error_of (reply, status);
+    }
+  return id;
+}
+
+/* The topic's Doc: the one from before, replaced in place; else one Notes
+ * made earlier without hearing back (found by name), replaced in place;
+ * else a new Doc in `parent`. */
 static char *
 put_doc (Sync *s, const JnDriveItem *it, const char *parent, char **link, char **error)
 {
-  char *id = NULL;
-  if (it->doc != NULL)
+  gboolean refused = FALSE;
+  char *id = it->doc != NULL ? update_doc (s, it, it->doc, link, &refused, error) : NULL;
+  if (id == NULL && !refused && s->fatal == NULL)
     {
-      g_autofree char *meta = jn_drive_metadata (it->name, NULL, NULL);
-      g_autofree char *type = NULL;
-      g_autoptr (GBytes) body = jn_drive_multipart (meta, it->markdown, &type);
-      g_autofree char *path = g_strdup_printf ("upload/drive/v3/files/%s?uploadType=multipart&" FILE_FIELDS, it->doc);
-      guint status;
-      g_autoptr (GBytes) reply = call (s, "PATCH", path, type, body, &status);
-      id = live_id (reply, status, link);
-      if (id == NULL && s->fatal == NULL && status != 404 && !ok (status))
-        {
-          *error = error_of (reply, status);
-          return NULL;
-        }
+      g_autofree char *found = find (s, it->name, JN_DRIVE_DOC_MIME, parent, NULL);
+      if (found != NULL)
+        id = update_doc (s, it, found, link, &refused, error);
     }
-  if (id == NULL && s->fatal == NULL)
+  if (id == NULL && !refused && s->fatal == NULL)
     {
       g_autofree char *meta = jn_drive_metadata (it->name, JN_DRIVE_DOC_MIME, parent);
       g_autofree char *type = NULL;
@@ -228,7 +267,7 @@ shared (Sync *s, const char *doc)
 }
 
 JnDriveAnswer
-jn_drive_sync (SoupSession *session, const JnDriveRequest *request)
+jn_drive_sync (SoupSession *session, const JnDriveRequest *request, JnDriveEach each, gpointer user)
 {
   Sync s = { session, request, g_strconcat ("Bearer ", request->token, NULL), NULL, NULL,
              g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free) };
@@ -240,22 +279,25 @@ jn_drive_sync (SoupSession *session, const JnDriveRequest *request)
       JnDriveResult *r = &a.results[a.n_results++];
       r->topic = it->topic;
       const char *parent = folder (&s, it, &r->error);
-      if (parent == NULL)
-        continue;
-      r->folder = g_strdup (parent);
-      r->doc = put_doc (&s, it, parent, &r->link, &r->error);
-      if (r->doc == NULL)
-        continue;
-      r->verified = same_on_drive (&s, it, r->doc, &r->error);
-      r->shared = shared (&s, r->doc);
+      if (parent != NULL)
+        {
+          r->folder = g_strdup (parent);
+          r->doc = put_doc (&s, it, parent, &r->link, &r->error);
+        }
+      if (r->doc != NULL)
+        {
+          r->verified = same_on_drive (&s, it, r->doc, &r->error);
+          r->shared = shared (&s, r->doc);
+        }
+      /* A Doc made just before the run stopped is still reported (not
+       * verified), so the next backup replaces it instead of making a
+       * second one. */
+      if (s.fatal != NULL)
+        r->verified = FALSE;
+      if (each != NULL)
+        each (r, s.root, user);
     }
-  if (s.fatal != NULL)
-    {
-      /* Stopped: nothing in this run counts as backed up. */
-      a.error = g_steal_pointer (&s.fatal);
-      for (gsize i = 0; i < a.n_results; i++)
-        a.results[i].verified = FALSE;
-    }
+  a.error = g_steal_pointer (&s.fatal);
   a.root = g_steal_pointer (&s.root);
   memset (s.auth, 0, strlen (s.auth));
   g_free (s.auth);

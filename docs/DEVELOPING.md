@@ -19,8 +19,10 @@ journal                     the start screen (src/launcher). Starts one of
                                  Landlock: no files, TCP 443 only
 ```
 
-The two helpers get one JSON request on stdin and write one JSON answer
-on stdout. They hold a one-hour access token and never the sign-in
+The two helpers get one JSON request on stdin and write their answer on
+stdout: journal-ai one JSON object, journal-drive one line per topic as
+soon as it is done, then an end line (so a backup cut short still tells
+Notes about every Doc it made). They hold a one-hour access token and never the sign-in
 itself. They start with an empty environment and refuse to work without
 their lock.
 

@@ -5,7 +5,7 @@
 targets = {
   'date' : core_dep, 'text' : core_dep, 'lockout' : core_dep, 'secrets' : core_dep, 'journal_file' : core_dep,
   'markdown' : notes_core_dep, 'svgsafe' : notes_core_dep, 'noteline' : notes_core_dep,
-  'textify' : notes_ai_dep, 'aiproto' : notes_ai_dep,
+  'textify' : notes_ai_dep, 'aiproto' : notes_ai_dep, 'drive' : notes_drive_dep,
 }
 foreach t, dep : targets
   if get_option('fuzz')

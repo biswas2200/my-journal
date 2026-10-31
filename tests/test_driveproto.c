@@ -76,6 +76,69 @@ test_round_trip (void)
   jn_drive_answer_clear (&aback);
 }
 
+/* ---- line by line ------------------------------------------------------------ */
+
+static void
+test_lines (void)
+{
+  JnDriveResult r = { 7, (char *) "doc-7", (char *) "fold-1", (char *) "https://docs.google.com/d/doc-7", TRUE, FALSE,
+                      NULL };
+  g_autofree char *line = jn_drive_result_line (&r, "root-1");
+  g_assert_null (strchr (line, '\n')); /* one line, whatever the strings hold */
+  JnDriveResult back = { 0 };
+  g_autofree char *root = NULL, *error = NULL;
+  g_assert_cmpint (jn_drive_line_parse (line, -1, &back, &root, &error), ==, JN_DRIVE_LINE_RESULT);
+  g_assert_cmpint (back.topic, ==, 7);
+  g_assert_cmpstr (back.doc, ==, "doc-7");
+  g_assert_cmpstr (back.folder, ==, "fold-1");
+  g_assert_true (back.verified);
+  g_assert_cmpstr (root, ==, "root-1");
+  jn_drive_result_clear (&back);
+  g_clear_pointer (&root, g_free);
+
+  JnDriveResult failed = { 9, NULL, NULL, NULL, FALSE, FALSE, (char *) "Drive is full\nreally" };
+  g_autofree char *fline = jn_drive_result_line (&failed, NULL);
+  g_assert_null (strchr (fline, '\n'));
+  g_assert_cmpint (jn_drive_line_parse (fline, -1, &back, &root, &error), ==, JN_DRIVE_LINE_RESULT);
+  g_assert_cmpstr (back.error, ==, "Drive is full\nreally");
+  g_assert_null (root);
+  jn_drive_result_clear (&back);
+
+  g_autofree char *end = jn_drive_end_line ("root-1", "Sign in again");
+  g_assert_cmpint (jn_drive_line_parse (end, -1, &back, &root, &error), ==, JN_DRIVE_LINE_END);
+  g_assert_cmpstr (root, ==, "root-1");
+  g_assert_cmpstr (error, ==, "Sign in again");
+  g_clear_pointer (&root, g_free);
+  g_clear_pointer (&error, g_free);
+
+  static const char *bad[] = { "", "{}", "[1]", "{\"topic\":\"x\"}", "{\"end\":5}", "nonsense", "{\"topic\":0}" };
+  JrCases c = { "bad lines", 0, 0 };
+  for (gsize i = 0; i < G_N_ELEMENTS (bad); i++)
+    {
+      JnDriveLine k = jn_drive_line_parse (bad[i], -1, &back, &root, &error);
+      jr_case (&c, bad[i], k == JN_DRIVE_LINE_BAD && back.doc == NULL && root == NULL && error == NULL, "Got %d", k);
+    }
+  jr_cases_done (&c);
+
+  /* A whole answer from lines; without its end line it was cut off. */
+  g_autofree char *text = g_strdup_printf ("%s\n%s\n%s\n", line, fline, end);
+  JnDriveAnswer a = { 0 };
+  g_assert_true (jn_drive_answer_from_lines (text, &a));
+  g_assert_cmpuint (a.n_results, ==, 2);
+  g_assert_cmpstr (a.root, ==, "root-1");
+  g_assert_cmpstr (a.error, ==, "Sign in again");
+  g_assert_cmpint (a.results[0].topic, ==, 7);
+  g_assert_cmpint (a.results[1].topic, ==, 9);
+  jn_drive_answer_clear (&a);
+  g_autofree char *cut = g_strdup_printf ("%s\n", line);
+  g_assert_true (jn_drive_answer_from_lines (cut, &a));
+  g_assert_cmpuint (a.n_results, ==, 1);
+  g_assert_nonnull (a.error); /* cut off */
+  jn_drive_answer_clear (&a);
+  g_assert_false (jn_drive_answer_from_lines ("garbage\n", &a));
+  jn_drive_answer_clear (&a);
+}
+
 /* ---- refused requests ---------------------------------------------------------- */
 
 static void
@@ -186,6 +249,36 @@ test_drive_answers (void)
   jr_cases_done (&g);
 }
 
+/* ---- finding a file Notes made before ---------------------------------------------- */
+
+static void
+test_find (void)
+{
+  static const struct { const char *name, *parent, *want; } t[] = {
+    { "Prefix sum", "fold-1", "name = 'Prefix sum' and mimeType = '" JN_DRIVE_DOC_MIME "' and 'fold-1' in parents and trashed = false" },
+    { "it's \\ odd", "root", "name = 'it\\'s \\\\ odd' and mimeType = '" JN_DRIVE_DOC_MIME "' and 'root' in parents and trashed = false" },
+  };
+  JrCases c = { "find query", 0, 0 };
+  for (gsize i = 0; i < G_N_ELEMENTS (t); i++)
+    {
+      g_autofree char *q = jn_drive_find_query (t[i].name, JN_DRIVE_DOC_MIME, t[i].parent);
+      g_autofree char *plain = g_uri_unescape_string (q, NULL);
+      jr_case (&c, t[i].name, g_strcmp0 (plain, t[i].want) == 0 && strpbrk (q, " '&=") == NULL,
+               "Expected %s  Got %s (%s)", t[i].want, plain, q);
+    }
+  jr_cases_done (&c);
+  g_autofree char *id = NULL, *link = NULL;
+  g_assert_true (jn_drive_parse_first ("{\"files\":[{\"id\":\"a\",\"webViewLink\":\"https://d/a\"},{\"id\":\"b\"}]}", -1,
+                                       &id, &link));
+  g_assert_cmpstr (id, ==, "a");
+  g_assert_cmpstr (link, ==, "https://d/a");
+  g_autofree char *none = NULL;
+  g_assert_false (jn_drive_parse_first ("{\"files\":[]}", -1, &none, NULL));
+  g_assert_false (jn_drive_parse_first ("{\"files\":[5]}", -1, &none, NULL));
+  g_assert_false (jn_drive_parse_first ("nope", -1, &none, NULL));
+  g_assert_null (none);
+}
+
 /* ---- the upload itself ------------------------------------------------------------- */
 
 static void
@@ -274,9 +367,11 @@ main (int argc, char **argv)
 {
   g_test_init (&argc, &argv, NULL);
   g_test_add_func ("/driveproto/round-trip", test_round_trip);
+  g_test_add_func ("/driveproto/lines", test_lines);
   g_test_add_func ("/driveproto/bad-requests", test_bad_requests);
   g_test_add_func ("/driveproto/drive-answers", test_drive_answers);
   g_test_add_func ("/driveproto/upload-body", test_upload_body);
+  g_test_add_func ("/driveproto/find", test_find);
   g_test_add_func ("/driveproto/same-text", test_same_text);
   return g_test_run ();
 }

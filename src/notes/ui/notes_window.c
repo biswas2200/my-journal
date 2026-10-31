@@ -47,6 +47,7 @@ struct _JnWindow {
   gboolean      backing_up;
   gboolean      closing;        /* hidden, backing up before it closes */
   gboolean      closing_backed; /* that backup is over: close for real */
+  guint         close_limit_ms; /* how long closing may wait for it */
   GtkWidget    *drive_button, *drive_line, *sign_in, *backup_topic, *backup_all, *sign_out, *backup_state;
 };
 
@@ -1176,6 +1177,7 @@ jn_window_class_init (JnWindowClass *klass)
 static void
 jn_window_init (JnWindow *win)
 {
+  win->close_limit_ms = 60 * 1000; /* a minute: what is done by then is kept */
   gtk_window_set_title (GTK_WINDOW (win), "Notes");
   gtk_window_set_default_size (GTK_WINDOW (win), 1080, 680);
   gtk_widget_add_css_class (GTK_WIDGET (win), "notes");
@@ -1427,10 +1429,10 @@ update_drive (JnWindow *win)
 }
 
 typedef struct {
-  JnWindow *win;      /* a reference, for as long as the backup runs */
-  GArray   *versions; /* each item's version when it was sent */
-  gboolean  closing;
-  guint     limit_id; /* the minute allowed when closing */
+  JnWindow   *win;      /* a reference, for as long as the backup runs */
+  GHashTable *versions; /* topic -> its version when it was sent */
+  gboolean    closing;
+  guint       limit_id; /* the time allowed when closing */
 } Run;
 
 static gboolean
@@ -1438,34 +1440,43 @@ on_close_limit (gpointer data)
 {
   Run *run = data;
   run->limit_id = 0;
-  g_cancellable_cancel (run->win->drive_cancel);
+  g_cancellable_cancel (run->win->drive_cancel); /* what is done so far is kept */
   return G_SOURCE_REMOVE;
 }
 
-/* What the backup did, recorded and said in plain words. */
+/* One topic's result, recorded at once (a backup cut off later still
+ * made this Doc, and the next one must replace it, not add another). */
 static void
-apply_answer (JnWindow *win, const JnDriveAnswer *a, GArray *versions)
+on_backup_each (const JnDriveResult *r, const char *root, gpointer user)
 {
-  if (a->root != NULL)
-    jn_db_set_setting (win->db, "drive_root", a->root);
+  Run *run = user;
+  JnWindow *win = run->win;
+  if (root != NULL)
+    jn_db_set_setting (win->db, "drive_root", root);
+  gint64 subject = 0;
+  g_autofree char *sn = NULL, *tn = NULL;
+  if (!jn_db_get_topic (win->db, r->topic, &subject, &sn, &tn))
+    return; /* deleted meanwhile */
+  if (r->folder != NULL)
+    jn_db_set_drive_folder (win->db, subject, r->folder);
+  /* The Doc is kept even when not verified, so the next backup replaces
+   * it instead of making a second one; version -1 keeps the topic due. */
+  gint64 *version = g_hash_table_lookup (run->versions, &r->topic);
+  if (r->doc != NULL)
+    jn_db_drive_set (win->db, r->topic, r->doc, r->link, r->verified && version != NULL ? *version : -1, now ());
+}
+
+/* What the backup did, said in plain words (each topic is already
+ * recorded). */
+static void
+say_answer (JnWindow *win, const JnDriveAnswer *a)
+{
   int done = 0, failed = 0;
   const char *first_error = NULL;
   g_autofree char *shared_topic = NULL;
-  gint64 t = now ();
   for (gsize i = 0; i < a->n_results; i++)
     {
       const JnDriveResult *r = &a->results[i];
-      gint64 subject = 0;
-      g_autofree char *sn = NULL, *tn = NULL;
-      if (!jn_db_get_topic (win->db, r->topic, &subject, &sn, &tn))
-        continue; /* deleted meanwhile */
-      if (r->folder != NULL)
-        jn_db_set_drive_folder (win->db, subject, r->folder);
-      /* The Doc is kept even when not verified, so the next backup
-       * replaces it instead of making a second one; version -1 keeps the
-       * topic due. */
-      if (r->doc != NULL)
-        jn_db_drive_set (win->db, r->topic, r->doc, r->link, r->verified ? g_array_index (versions, gint64, i) : -1, t);
       if (r->verified)
         done++;
       else
@@ -1474,12 +1485,19 @@ apply_answer (JnWindow *win, const JnDriveAnswer *a, GArray *versions)
           if (first_error == NULL)
             first_error = r->error;
         }
-      if (r->shared && shared_topic == NULL)
+      gint64 subject = 0;
+      g_autofree char *sn = NULL, *tn = NULL;
+      if (r->shared && shared_topic == NULL && jn_db_get_topic (win->db, r->topic, &subject, &sn, &tn))
         shared_topic = g_steal_pointer (&tn);
     }
-  g_autofree char *at = when (t);
+  g_autofree char *at = when (now ());
   if (a->error != NULL)
-    set_alarm (win, a->error);
+    {
+      g_autofree char *msg = done > 0 ? g_strdup_printf ("%s (%d %s backed up before that.)", a->error, done,
+                                                         done == 1 ? "topic was" : "topics were")
+                                      : g_strdup (a->error);
+      set_alarm (win, msg);
+    }
   else if (shared_topic != NULL)
     {
       g_autofree char *msg = g_strdup_printf ("Backed up. Careful: someone besides you can open \xe2\x80\x9c%s\xe2\x80\x9d "
@@ -1510,7 +1528,7 @@ on_backup_done (const JnDriveAnswer *answer, const char *error, gpointer user)
   g_clear_handle_id (&run->limit_id, g_source_remove);
   win->backing_up = FALSE;
   if (answer != NULL)
-    apply_answer (win, answer, run->versions);
+    say_answer (win, answer);
   else
     set_alarm (win, error);
   rebuild (win);
@@ -1521,7 +1539,7 @@ on_backup_done (const JnDriveAnswer *answer, const char *error, gpointer user)
       win->closing_backed = TRUE;
       gtk_window_close (GTK_WINDOW (win)); /* now for real */
     }
-  g_array_unref (run->versions);
+  g_hash_table_unref (run->versions);
   g_object_unref (win);
   g_free (run);
 }
@@ -1540,7 +1558,7 @@ start_backup (JnWindow *win, GArray *topics, gboolean closing)
     return FALSE;
   close_page (win); /* the latest text, saved first */
   JnDriveItem *items = g_new0 (JnDriveItem, topics->len);
-  GArray *versions = g_array_new (FALSE, FALSE, sizeof (gint64));
+  GHashTable *versions = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, g_free);
   gsize n = 0;
   for (guint i = 0; i < topics->len; i++)
     {
@@ -1554,7 +1572,7 @@ start_backup (JnWindow *win, GArray *topics, gboolean closing)
       items[n] = (JnDriveItem){ id, g_steal_pointer (&sn), g_steal_pointer (&tn), jn_export_topic (win->db, id),
                                 g_steal_pointer (&st.doc), jn_db_drive_folder (win->db, subject) };
       jn_drive_state_clear (&st);
-      g_array_append_val (versions, version);
+      g_hash_table_insert (versions, g_memdup2 (&id, sizeof id), g_memdup2 (&version, sizeof version));
       n++;
     }
   g_autofree char *root = jn_db_get_setting (win->db, "drive_root");
@@ -1565,12 +1583,12 @@ start_backup (JnWindow *win, GArray *topics, gboolean closing)
   g_clear_object (&win->drive_cancel);
   win->drive_cancel = g_cancellable_new ();
   if (closing)
-    run->limit_id = g_timeout_add_seconds (60, on_close_limit, run);
+    run->limit_id = g_timeout_add (win->close_limit_ms, on_close_limit, run);
   win->backing_up = TRUE;
   g_autofree char *msg = g_strdup_printf ("Backing up %zu %s to Google Drive\xe2\x80\xa6", n, n == 1 ? "topic" : "topics");
   set_status (win, msg);
   update_drive (win);
-  win->drive->run (win->drive, root, items, n, win->drive_cancel, on_backup_done, run);
+  win->drive->run (win->drive, root, items, n, win->drive_cancel, on_backup_each, on_backup_done, run);
   for (gsize i = 0; i < n; i++)
     {
       g_free (items[i].subject);
@@ -1661,6 +1679,12 @@ jn_window_drive_sign_out (JnWindow *win)
   set_status (win, "Signed out of Google Drive. Your backups stay in your Drive.");
   rebuild (win);
   update_drive (win);
+}
+
+void
+jn_window_set_close_limit (JnWindow *win, guint ms)
+{
+  win->close_limit_ms = ms;
 }
 
 void

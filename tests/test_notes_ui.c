@@ -1443,14 +1443,18 @@ typedef struct {
   GString  *asked;        /* "name|doc|folder|root" per item, ";" between */
   char     *last_markdown;
   int       runs;
+  guint     step_ms;      /* results come this far apart (a slow Drive) */
 } FakeDrive;
 
 typedef struct {
   FakeDrive     *f;
   JnDriveAnswer  a;
+  gsize          sent;    /* results handed to `each` so far */
+  JnBackupEach   each;
   JnBackupDone   done;
   gpointer       user;
   JnSignInDone   signed_done;
+  GCancellable  *cancel;
 } FakeReply;
 
 static gboolean fake_can (JnBackup *b) { (void) b; return TRUE; }
@@ -1479,28 +1483,47 @@ fake_sign_in (JnBackup *b, GCancellable *cancel, JnSignInDone done, gpointer use
 
 static void fake_sign_out (JnBackup *b) { ((FakeDrive *) b)->signed_in = FALSE; }
 
+/* One result per step, as the real helper reports them; then the end. A
+ * cancel stops it where it is, as killing the helper would. */
 static gboolean
-fake_run_idle (gpointer data)
+fake_run_step (gpointer data)
 {
   FakeReply *r = data;
+  gboolean stopped = g_cancellable_is_cancelled (r->cancel);
+  if (!stopped && r->sent < r->a.n_results)
+    {
+      r->each (&r->a.results[r->sent], r->a.root, r->user);
+      r->sent++;
+      return G_SOURCE_CONTINUE;
+    }
+  for (gsize i = r->sent; i < r->a.n_results; i++)
+    jn_drive_result_clear (&r->a.results[i]);
+  r->a.n_results = r->sent;
+  if (stopped)
+    {
+      g_free (r->a.error);
+      r->a.error = g_strdup ("Stopped. The topics already done are kept.");
+    }
   r->done (&r->a, NULL, r->user);
   jn_drive_answer_clear (&r->a);
+  g_object_unref (r->cancel);
   g_free (r);
   return G_SOURCE_REMOVE;
 }
 
 static void
-fake_run (JnBackup *b, const char *root, const JnDriveItem *items, gsize n, GCancellable *cancel, JnBackupDone done,
-          gpointer user)
+fake_run (JnBackup *b, const char *root, const JnDriveItem *items, gsize n, GCancellable *cancel, JnBackupEach each,
+          JnBackupDone done, gpointer user)
 {
-  (void) cancel;
   FakeDrive *f = (FakeDrive *) b;
   f->runs++;
   g_string_truncate (f->asked, 0);
   FakeReply *r = g_new0 (FakeReply, 1);
   r->f = f;
+  r->each = each;
   r->done = done;
   r->user = user;
+  r->cancel = cancel != NULL ? g_object_ref (cancel) : g_cancellable_new ();
   r->a.root = g_strdup ("root-1");
   r->a.results = g_new0 (JnDriveResult, MAX (n, 1));
   if (f->expired)
@@ -1522,7 +1545,10 @@ fake_run (JnBackup *b, const char *root, const JnDriveItem *items, gsize n, GCan
       res->error = fails ? g_strdup ("The Doc on Google Drive did not read back as the same text.") : NULL;
       res->shared = g_strcmp0 (items[i].name, f->shared_topic) == 0;
     }
-  g_idle_add (fake_run_idle, r);
+  if (f->step_ms > 0)
+    g_timeout_add (f->step_ms, fake_run_step, r);
+  else
+    g_idle_add (fake_run_step, r);
 }
 
 static void
@@ -1672,6 +1698,50 @@ test_drive (void)
   gtk_window_close (GTK_WINDOW (win));
   pump (50);
   jr_case (&c, "nothing changed: closes at once", win == NULL, "still open");
+
+  /* A slow Drive and a short limit: closing stops the backup half-way,
+   * keeps what was done, and the rest stays due for the next time. */
+  {
+    JnDb *d = jn_db_open (path, NULL);
+    gint64 dsa2 = jn_db_add_subject (d, "OS");
+    for (int i = 0; i < 6; i++)
+      {
+        g_autofree char *name = g_strdup_printf ("Paging %d", i);
+        gint64 t = jn_db_add_topic (d, dsa2, name);
+        jn_db_add_study (d, t, 100, 60); /* changed: due */
+      }
+    jn_db_close (d);
+  }
+  f = fake_drive_new ();
+  f->signed_in = TRUE;
+  f->step_ms = 150;
+  win = jn_window_new (NULL, jn_db_open (path, NULL), dir);
+  jn_window_set_drive (win, &f->base);
+  jn_window_set_close_limit (win, 400);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (50);
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win));
+  until = g_get_monotonic_time () + 5 * G_USEC_PER_SEC;
+  while (win != NULL && g_get_monotonic_time () < until)
+    g_main_context_iteration (NULL, TRUE);
+  db = jn_db_open (path, NULL);
+  int kept = 0, due = 0;
+  for (gint64 t = 1; t <= 20; t++)
+    {
+      g_autofree char *sn = NULL, *tn = NULL;
+      gint64 s = 0;
+      if (!jn_db_get_topic (db, t, &s, &sn, &tn) || !g_str_has_prefix (tn, "Paging"))
+        continue;
+      if (jn_db_drive_mark (db, t) == JN_DRIVE_DONE)
+        kept++;
+      else
+        due++;
+    }
+  jr_case (&c, "cut off at closing: done kept, rest due", win == NULL && kept >= 1 && due >= 1 && kept + due == 6,
+           "closed=%d kept=%d due=%d", win == NULL, kept, due);
+  jn_db_close (db);
+
   jr_cases_done (&c);
   remove_tree (dir);
 }

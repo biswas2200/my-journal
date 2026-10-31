@@ -397,3 +397,174 @@ jn_drive_same_text (const char *note, const char *doc)
   g_autofree char *b = words (doc != NULL ? doc : "");
   return strcmp (a, b) == 0;
 }
+
+/* ---- the helper's answer, line by line ------------------------------------------- */
+
+static void
+add_result (JsonBuilder *b, const JnDriveResult *r)
+{
+  json_builder_set_member_name (b, "topic");
+  json_builder_add_int_value (b, r->topic);
+  add_string (b, "doc", r->doc);
+  add_string (b, "folder", r->folder);
+  add_string (b, "link", r->link);
+  json_builder_set_member_name (b, "verified");
+  json_builder_add_boolean_value (b, r->verified);
+  json_builder_set_member_name (b, "shared");
+  json_builder_add_boolean_value (b, r->shared);
+  add_string (b, "error", r->error);
+}
+
+char *
+jn_drive_result_line (const JnDriveResult *r, const char *root)
+{
+  JsonBuilder *b = json_builder_new ();
+  json_builder_begin_object (b);
+  add_result (b, r);
+  add_string (b, "root", root);
+  json_builder_end_object (b);
+  return jn_json_to_string (b); /* compact: strings carry "\n" escaped */
+}
+
+char *
+jn_drive_end_line (const char *root, const char *error)
+{
+  JsonBuilder *b = json_builder_new ();
+  json_builder_begin_object (b);
+  json_builder_set_member_name (b, "end");
+  json_builder_add_boolean_value (b, TRUE);
+  add_string (b, "root", root);
+  add_string (b, "error", error);
+  json_builder_end_object (b);
+  return jn_json_to_string (b);
+}
+
+void
+jn_drive_result_clear (JnDriveResult *r)
+{
+  g_free (r->doc);
+  g_free (r->folder);
+  g_free (r->link);
+  g_free (r->error);
+  *r = (JnDriveResult){ 0 };
+}
+
+JnDriveLine
+jn_drive_line_parse (const char *line, gssize len, JnDriveResult *result, char **root, char **error)
+{
+  *result = (JnDriveResult){ 0 };
+  *root = *error = NULL;
+  JsonParser *p;
+  JsonObject *o = jn_json_object (line, len, &p);
+  gint64 topic = 0;
+  JnDriveLine kind = JN_DRIVE_LINE_BAD;
+  if (jn_json_bool (o, "end"))
+    {
+      kind = JN_DRIVE_LINE_END;
+      *error = g_strdup (jn_json_str (o, "error"));
+    }
+  else if (jn_json_int (o, "topic", &topic) && topic > 0)
+    {
+      kind = JN_DRIVE_LINE_RESULT;
+      result->topic = topic;
+      result->doc = g_strdup (jn_json_str (o, "doc"));
+      result->folder = g_strdup (jn_json_str (o, "folder"));
+      result->link = g_strdup (jn_json_str (o, "link"));
+      result->verified = jn_json_bool (o, "verified");
+      result->shared = jn_json_bool (o, "shared");
+      result->error = g_strdup (jn_json_str (o, "error"));
+    }
+  if (kind != JN_DRIVE_LINE_BAD)
+    *root = g_strdup (jn_json_str (o, "root"));
+  g_object_unref (p);
+  return kind;
+}
+
+gboolean
+jn_drive_answer_from_lines (const char *text, JnDriveAnswer *out)
+{
+  *out = (JnDriveAnswer){ 0 };
+  g_auto (GStrv) lines = g_strsplit (text != NULL ? text : "", "\n", -1);
+  GArray *results = g_array_new (FALSE, TRUE, sizeof (JnDriveResult));
+  gboolean ended = FALSE, any = FALSE;
+  for (char **l = lines; *l != NULL; l++)
+    {
+      if (**l == '\0')
+        continue;
+      JnDriveResult r;
+      char *root = NULL, *error = NULL;
+      JnDriveLine kind = jn_drive_line_parse (*l, -1, &r, &root, &error);
+      if (kind == JN_DRIVE_LINE_BAD)
+        continue;
+      any = TRUE;
+      if (root != NULL)
+        {
+          g_free (out->root);
+          out->root = root;
+        }
+      if (kind == JN_DRIVE_LINE_RESULT)
+        g_array_append_val (results, r);
+      else
+        {
+          ended = TRUE;
+          g_free (out->error);
+          out->error = error;
+        }
+    }
+  if (any && !ended && out->error == NULL)
+    out->error = g_strdup ("The Drive helper stopped before it finished; the topics it did are kept, the others "
+                           "stay marked for the next backup.");
+  out->n_results = results->len;
+  out->results = (JnDriveResult *) g_array_free (results, FALSE);
+  return any;
+}
+
+/* ---- finding a file Notes made before ---------------------------------------------- */
+
+/* A string for Drive's query language: in single quotes, with \ and '
+ * escaped by a backslash. */
+static void
+quoted (GString *q, const char *s)
+{
+  g_string_append_c (q, '\'');
+  for (const char *p = s; *p != '\0'; p++)
+    {
+      if (*p == '\'' || *p == '\\')
+        g_string_append_c (q, '\\');
+      g_string_append_c (q, *p);
+    }
+  g_string_append_c (q, '\'');
+}
+
+char *
+jn_drive_find_query (const char *name, const char *mime, const char *parent)
+{
+  GString *q = g_string_new ("name = ");
+  quoted (q, name);
+  g_string_append (q, " and mimeType = ");
+  quoted (q, mime);
+  g_string_append (q, " and ");
+  quoted (q, parent);
+  g_string_append (q, " in parents and trashed = false");
+  char *escaped = g_uri_escape_string (q->str, NULL, FALSE);
+  g_string_free (q, TRUE);
+  return escaped;
+}
+
+gboolean
+jn_drive_parse_first (const char *json, gssize len, char **id, char **link)
+{
+  *id = NULL;
+  JsonParser *p;
+  JsonObject *o = jn_json_object (json, len, &p);
+  JsonArray *files = jn_json_arr (o, "files");
+  if (files != NULL && json_array_get_length (files) > 0 && JSON_NODE_HOLDS_OBJECT (json_array_get_element (files, 0)))
+    {
+      JsonObject *f = json_array_get_object_element (files, 0);
+      *id = g_strdup (jn_json_str (f, "id"));
+      if (*id != NULL && link != NULL)
+        *link = g_strdup (jn_json_str (f, "webViewLink"));
+    }
+  g_object_unref (p);
+  return *id != NULL;
+}

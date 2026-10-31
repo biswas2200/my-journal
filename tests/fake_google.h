@@ -30,6 +30,7 @@ extern char       *fg_last_redirect;  /* and its redirect_uri */
 extern char       *fg_revoked;        /* the last token revoked */
 extern int         fg_token_calls;    /* calls to /oauth/token */
 extern gboolean    fg_refresh_revoked; /* FG_REFRESH no longer works */
+extern int         fg_delay_ms;       /* each Drive request takes this long */
 
 void    fg_start       (void);
 int     fg_port        (void);

@@ -15,11 +15,16 @@
  *
  * An expired sign-in or no connection stops the whole run with one plain
  * error; anything else (a full Drive, a refused file) fails only that
- * topic, and the others go on. */
+ * topic, and the others go on. Each topic's result is handed to `each`
+ * as soon as it is done (the helper writes it out at once), so a run
+ * that is stopped still tells Notes about every Doc it made. */
 #pragma once
 
 #include <libsoup/soup.h>
 #include "driveproto.h"
 
-/* Runs the backup; the answer has one result per item, in order. */
-JnDriveAnswer jn_drive_sync (SoupSession *session, const JnDriveRequest *request);
+/* `root` is the Notes folder once known (else NULL). */
+typedef void (*JnDriveEach) (const JnDriveResult *result, const char *root, gpointer user);
+
+/* Runs the backup; the answer has one result per item done, in order. */
+JnDriveAnswer jn_drive_sync (SoupSession *session, const JnDriveRequest *request, JnDriveEach each, gpointer user);

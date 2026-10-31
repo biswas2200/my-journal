@@ -19,6 +19,12 @@
 - The sidebar now highlights what you clicked (a style rule hid it).
 - A backup cut off by a crash no longer leaves SQLite's side file
   behind, where the next backup could have picked it up.
+- Google Drive: a backup cut short (Notes closing after its minute) used
+  to lose track of the Docs it had made, and the next one made them
+  again; and the helper kept running after Notes stopped listening.
+  Each topic is now recorded the moment it is done, the helper is
+  stopped with the backup, and before making a folder or Doc the helper
+  looks for one Notes made earlier: nothing is ever made twice.
 
 ### Notes: back up to your own Google Drive
 
@@ -52,6 +58,8 @@
   build and back. CI runs it on every push.
 - A load test (`meson test --suite load`) with years of notes, timed
   against fixed limits; CI runs it too.
+- A fuzz target for everything the Drive backup reads from Google and
+  from its helper (`fuzz/fuzz_drive.c`).
 
 ## 0.1.0 (30 October 2026)
 

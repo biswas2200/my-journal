@@ -111,7 +111,8 @@ open_page (const char *uri, gpointer user)
 typedef struct {
   gboolean done, ok;
   char *error;
-  int verified, n;
+  int verified, n, each;
+  GCancellable *cancel_after_first; /* cancelled when the first topic is reported */
 } Result;
 
 static void
@@ -121,6 +122,16 @@ on_signed_in (gboolean ok, const char *error, gpointer user)
   r->done = TRUE;
   r->ok = ok;
   r->error = g_strdup (error);
+}
+
+static void
+on_each (const JnDriveResult *r, const char *root, gpointer user)
+{
+  (void) root;
+  Result *res = user;
+  res->each += r->doc != NULL;
+  if (res->cancel_after_first != NULL)
+    g_cancellable_cancel (res->cancel_after_first);
 }
 
 static void
@@ -196,7 +207,7 @@ test_client (void)
 
   /* A backup right away (the sign-in's own access token). */
   r = (Result){ 0 };
-  b->run (b, NULL, items, G_N_ELEMENTS (items), NULL, on_backed_up, &r);
+  b->run (b, NULL, items, G_N_ELEMENTS (items), NULL, on_each, on_backed_up, &r);
   wait_for (&r);
   jr_case (&c, "backed up after signing in", r.ok && r.n == 2 && r.verified == 2, "%s n=%d verified=%d", r.error, r.n,
            r.verified);
@@ -207,18 +218,57 @@ test_client (void)
   b = client (client_file);
   int calls = fg_token_calls;
   r = (Result){ 0 };
-  b->run (b, NULL, items, G_N_ELEMENTS (items), NULL, on_backed_up, &r);
+  b->run (b, NULL, items, G_N_ELEMENTS (items), NULL, on_each, on_backed_up, &r);
   wait_for (&r);
   jr_case (&c, "backed up after a restart", r.ok && r.verified == 2 && fg_token_calls == calls + 1, "%s calls %d",
            r.error, fg_token_calls - calls);
   g_free (r.error);
+
+  /* Stopped half-way (Notes closing): every topic done so far was
+   * reported and the helper itself stops. A request already on its way
+   * may still make a Doc Notes did not hear of; backing up again finds it
+   * instead of making a second one. */
+  JnDriveItem many[6];
+  for (int i = 0; i < 6; i++)
+    many[i] = (JnDriveItem){ 10 + i, (char *) "DSA", g_strdup_printf ("Topic %d", i), (char *) "# x", NULL, NULL };
+  fg_delay_ms = 60;
+  GCancellable *cancel = g_cancellable_new ();
+  r = (Result){ 0 };
+  r.cancel_after_first = cancel;
+  b->run (b, NULL, many, 6, cancel, on_each, on_backed_up, &r);
+  wait_for (&r);
+  g_usleep (500 * 1000); /* a request already on its way lands */
+  int seen = fg_requests;
+  g_usleep (1500 * 1000);
+  jr_case (&c, "stopped: done topics reported, helper stopped", r.each >= 1 && r.each < 6 && r.error != NULL &&
+           strstr (r.error, "Stopped") != NULL && fg_requests == seen, "each=%d %s requests %d -> %d", r.each, r.error,
+           seen, fg_requests);
+  fg_delay_ms = 0;
+  g_free (r.error);
+  r = (Result){ 0 };
+  b->run (b, NULL, many, 6, NULL, on_each, on_backed_up, &r); /* Notes forgot nothing it heard; it heard little */
+  wait_for (&r);
+  int docs = 0;
+  g_mutex_lock (&fg_lock);
+  GHashTableIter fit;
+  gpointer fk, fv;
+  g_hash_table_iter_init (&fit, fg_files);
+  while (g_hash_table_iter_next (&fit, &fk, &fv))
+    docs += g_str_has_prefix (((FgFile *) fv)->name, "Topic ");
+  g_mutex_unlock (&fg_lock);
+  jr_case (&c, "backed up again: one Doc per topic, none twice", r.ok && r.verified == 6 && docs == 6,
+           "%s verified=%d docs=%d", r.error, r.verified, docs);
+  g_free (r.error);
+  g_object_unref (cancel);
+  for (int i = 0; i < 6; i++)
+    g_free ((char *) many[i].name);
 
   /* Google revoked it: forgotten, Sign in offered again. */
   b->free (b);
   b = client (client_file);
   fg_refresh_revoked = TRUE;
   r = (Result){ 0 };
-  b->run (b, NULL, items, G_N_ELEMENTS (items), NULL, on_backed_up, &r);
+  b->run (b, NULL, items, G_N_ELEMENTS (items), NULL, on_each, on_backed_up, &r);
   wait_for (&r);
   jr_case (&c, "a revoked sign-in is forgotten", !r.ok && r.error != NULL && strstr (r.error, "Sign in") != NULL &&
            !b->signed_in (b) && kept == NULL && strstr (r.error, "1//") == NULL, "%s kept=%s", r.error, kept);
