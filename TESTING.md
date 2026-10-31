@@ -58,6 +58,12 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Backups and rescue copies: backup names by local day, pruning keeps the newest 14 and never touches other files; a copy made while open is whole, private and opens with every note; read-only (a full disk) fails saves but keeps reading; a damaged file is refused and left byte for byte as it was; rescue copies written whole and private, an error where they cannot be | `core/notebackup` |
 | Notes crash safety: a writer saving a note, logging study time, making backups and rescue copies is killed with SIGKILL at a random moment, 25 times; every time notes.db opens and passes its check, holds every save reported (never one not started), the study time reported, and every backup and rescue copy is a whole version | `core/notes_crash` |
 | Notes memory: 30 tours of everything (open a window, two topics, typing, Markdown preview, an enhanced copy, the topic reference, export, an empty session dropped, the study clock, a backup, close) and the heap does not grow (measured: none; a planted 2 KB-per-row leak fails it) | `ui/notes-ui` (`/notes-ui/no-growth`) |
+| Drive messages: requests and answers survive the trip; 11 kinds of bad request refused; Drive's file, permission and error replies (full Drive, rate limit, expired sign-in) in plain words; the multipart upload; "same text" ignores Google's Markdown style but catches any missing, changed, extra, moved or accent-stripped word | `core/driveproto` |
+| Sign in with Google: the client file (desktop only), PKCE with RFC 7636's own example, fresh verifiers and states, the sign-in page's parameters, the browser's return (wrong state, said no, no code), token forms and answers (Drive unticked, revoked, wild lifetime), no secret in any error | `core/oauth` |
+| The real Drive helper against a fake Drive: the first backup makes Notes/<subject>/<topic>; the next updates in place (no new files) and follows renames; binned or deleted Docs and folders made again where they belong; a Doc that reads back different is reported; a shared Doc flagged; a full Drive fails only that topic; an expired sign-in stops it with one message; a port not allowed is never reached | `sandbox/drive-helper` |
+| Notes' Drive client with a fake Google, a fake browser and the real helper: no client file says where it goes; sign-in trades the code with the page's verifier and keeps the refresh token; a program poking the sign-in port is ignored; saying no signs nothing in; backups after sign-in and after a restart; a revoked sign-in is forgotten; Sign out revokes and forgets | `sandbox/drive-client` |
+| Drive in the window: quiet until signed in; then states and amber marks; back up a topic (sent as Export .md writes it) and everything (with its Doc, folder and the Notes folder); nothing due runs nothing; not verified stays due and reuses its Doc; a shared Doc and an expired sign-in said plainly; closing backs up first, then closes; nothing changed closes at once | `ui/notes-ui` (`/notes-ui/drive`) |
+| Backup records: every change bumps a topic's version (triggers), a subject rename bumps all its topics, a backup records the version sent (an edit during it stays due), due topics by subject then name, records and folders go with their topic or subject and survive a restart | `core/notesdb` |
 | Sidebar folds: one subject open at a time (the one clicked, or the open topic's), only its topics listed, ▸ / ▾ in front of each subject | `ui/notes-ui` (`/notes-ui/sidebar-folds`) |
 | Load: 100 subjects, 10 000 topics, 100 000 sessions (35 MB) and three 1 MB notes; timed against limits: open Notes 127 ms (1 s), open a topic 5 ms (100 ms), a session 30 ms (100 ms), longest freeze while typing with autosave 5 ms (50 ms), switch topics 30 ms (200 ms), export 0.3 ms (200 ms), open a 1 MB note 661 ms (1 s), save in it 28 ms (200 ms), close with the backup 77 ms (3 s) | `load/notes-load` (`meson test --suite load`) |
 | Sidebar highlight: exactly one row highlighted, the one clicked last (a subject picked for + Topic, or what the page shows: a session, "new session"); the page's subject and topic marked open; drawn with Notes' own styles the highlight is really on screen (#1C2633) and other rows stay clear | `ui/notes-ui` (`/notes-ui/sidebar-highlight`) |
@@ -283,3 +289,23 @@ at 0:00 the bell rings, a desktop notification says "Time's up", the
 status line says so, and the button reads **Start again**. Suspend the
 laptop for a few minutes with the stopwatch running: on waking it has
 not counted the sleep. **Export .md** shows "Time studied".
+
+### 16. Google Drive backup (needs the one-time setup in README)
+
+1. **☁ Drive → Sign in with Google.** *Your browser opens Google's page
+   ("Journal Notes wants to see, edit, create and delete only the
+   specific Google Drive files you use with this app"); after Allow, the
+   tab says "Signed in", and Notes says it too.*
+2. Open a topic. *It says "Not backed up yet" and has an amber stripe.*
+3. **Back up this topic.** *"Backed up 1 topic…"; in Drive: My Drive /
+   Notes / <subject> / <topic>, a Google Doc with your headings, bullets
+   and links.*
+4. Type a line. *"Changed since the last backup (…)" in amber.* Close
+   Notes. *It disappears, and a few seconds later the Doc in Drive has
+   the new line; File → Version history shows the earlier version.*
+5. In Drive, move the Doc to the bin, then **Back up everything.** *A
+   new Doc in the same folder; nothing else duplicated.*
+6. Share the Doc with someone (or "anyone with the link"), back up
+   again. *A red line says someone besides you can open it.*
+7. **Sign out.** *myaccount.google.com/permissions no longer lists the
+   app.*

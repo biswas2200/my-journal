@@ -15,6 +15,7 @@
 #include "editor.h"
 #include "md_view.h"
 #include "notebackup.h"
+#include "noteexport.h"
 #include "notes_window.h"
 #include "notesjail.h"
 #include "programs.h"
@@ -1429,6 +1430,252 @@ test_sidebar_folds (void)
   remove_tree (dir);
 }
 
+/* ---- Google Drive, with a stand-in for Google ---------------------------------- */
+
+/* Answers like the real client (later, from the main loop) and records
+ * what it was asked to back up. */
+typedef struct {
+  JnBackup  base;
+  gboolean  signed_in;
+  char     *fail_topic;   /* this topic does not verify */
+  char     *shared_topic; /* this topic is shared */
+  gboolean  expired;      /* the whole run: sign-in expired */
+  GString  *asked;        /* "name|doc|folder|root" per item, ";" between */
+  char     *last_markdown;
+  int       runs;
+} FakeDrive;
+
+typedef struct {
+  FakeDrive     *f;
+  JnDriveAnswer  a;
+  JnBackupDone   done;
+  gpointer       user;
+  JnSignInDone   signed_done;
+} FakeReply;
+
+static gboolean fake_can (JnBackup *b) { (void) b; return TRUE; }
+static gboolean fake_signed (JnBackup *b) { return ((FakeDrive *) b)->signed_in; }
+
+static gboolean
+fake_sign_in_idle (gpointer data)
+{
+  FakeReply *r = data;
+  r->f->signed_in = TRUE;
+  r->signed_done (TRUE, NULL, r->user);
+  g_free (r);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+fake_sign_in (JnBackup *b, GCancellable *cancel, JnSignInDone done, gpointer user)
+{
+  (void) cancel;
+  FakeReply *r = g_new0 (FakeReply, 1);
+  r->f = (FakeDrive *) b;
+  r->signed_done = done;
+  r->user = user;
+  g_idle_add (fake_sign_in_idle, r);
+}
+
+static void fake_sign_out (JnBackup *b) { ((FakeDrive *) b)->signed_in = FALSE; }
+
+static gboolean
+fake_run_idle (gpointer data)
+{
+  FakeReply *r = data;
+  r->done (&r->a, NULL, r->user);
+  jn_drive_answer_clear (&r->a);
+  g_free (r);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+fake_run (JnBackup *b, const char *root, const JnDriveItem *items, gsize n, GCancellable *cancel, JnBackupDone done,
+          gpointer user)
+{
+  (void) cancel;
+  FakeDrive *f = (FakeDrive *) b;
+  f->runs++;
+  g_string_truncate (f->asked, 0);
+  FakeReply *r = g_new0 (FakeReply, 1);
+  r->f = f;
+  r->done = done;
+  r->user = user;
+  r->a.root = g_strdup ("root-1");
+  r->a.results = g_new0 (JnDriveResult, MAX (n, 1));
+  if (f->expired)
+    r->a.error = g_strdup ("Google did not accept the sign-in. Sign in to Google again in Notes.");
+  for (gsize i = 0; i < n && !f->expired; i++)
+    {
+      g_string_append_printf (f->asked, "%s%s|%s|%s|%s", i > 0 ? ";" : "", items[i].name,
+                              items[i].doc ? items[i].doc : "-", items[i].folder ? items[i].folder : "-",
+                              root ? root : "-");
+      g_free (f->last_markdown);
+      f->last_markdown = g_strdup (items[i].markdown);
+      JnDriveResult *res = &r->a.results[r->a.n_results++];
+      res->topic = items[i].topic;
+      res->doc = g_strdup_printf ("doc-%" G_GINT64_FORMAT, items[i].topic);
+      res->folder = g_strdup_printf ("fold-%s", items[i].subject);
+      res->link = g_strdup_printf ("https://docs.google.com/document/d/doc-%" G_GINT64_FORMAT, items[i].topic);
+      gboolean fails = g_strcmp0 (items[i].name, f->fail_topic) == 0;
+      res->verified = !fails;
+      res->error = fails ? g_strdup ("The Doc on Google Drive did not read back as the same text.") : NULL;
+      res->shared = g_strcmp0 (items[i].name, f->shared_topic) == 0;
+    }
+  g_idle_add (fake_run_idle, r);
+}
+
+static void
+fake_drive_free (JnBackup *b)
+{
+  FakeDrive *f = (FakeDrive *) b;
+  g_string_free (f->asked, TRUE);
+  g_free (f->last_markdown);
+  /* fail_topic / shared_topic point at literals */
+  g_free (f);
+}
+
+static FakeDrive *
+fake_drive_new (void)
+{
+  FakeDrive *f = g_new0 (FakeDrive, 1);
+  f->base = (JnBackup){ fake_can, fake_signed, fake_sign_in, fake_sign_out, fake_run, fake_drive_free };
+  f->asked = g_string_new (NULL);
+  return f;
+}
+
+static void
+wait_backup (JnWindow *win)
+{
+  gint64 until = g_get_monotonic_time () + 5 * G_USEC_PER_SEC;
+  while (jn_window_is_backing_up (win) && g_get_monotonic_time () < until)
+    g_main_context_iteration (NULL, TRUE);
+  pump (20);
+}
+
+static void
+test_drive (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  JnDb *db = jn_db_open (path, NULL);
+  JnWindow *win = jn_window_new (NULL, db, dir);
+  FakeDrive *f = fake_drive_new ();
+  jn_window_set_drive (win, &f->base);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (100);
+  JnEditor *e = jn_window_editor (win);
+  jn_window_add_subject (win, "DSA");
+  gint64 tries = jn_window_add_topic (win, "Tries");
+  gint64 heaps = jn_window_add_topic (win, "Heaps");
+  jn_editor_focus (e);
+  type (e, "- sift down");
+  jn_window_save (win);
+  JrCases c = { "drive", 0, 0 };
+
+  /* Not signed in: no state, no marks, nothing runs. */
+  g_autofree char *due0 = rows_with (win, "due", NULL);
+  jr_case (&c, "signed out: quiet", g_strcmp0 (jn_window_backup_state (win), "") == 0 && *due0 == '\0' &&
+           !jn_window_backup_all (win), "state \"%s\" due \"%s\"", jn_window_backup_state (win), due0);
+
+  /* Sign in: every topic is due. */
+  jn_window_drive_sign_in (win);
+  pump (50);
+  g_autofree char *due1 = rows_with (win, "due", NULL);
+  jr_case (&c, "signed in: all due", g_strcmp0 (jn_window_backup_state (win), "Not backed up yet") == 0 &&
+           g_strcmp0 (due1, "Heaps | Tries") == 0, "state \"%s\" due \"%s\"", jn_window_backup_state (win), due1);
+
+  /* This topic: sent as Export .md writes it; then backed up. */
+  jr_case (&c, "back up this topic starts", jn_window_backup_topic (win) && jn_window_is_backing_up (win), "no");
+  wait_backup (win);
+  g_autofree char *md = jn_export_topic (db, heaps);
+  g_autofree char *due2 = rows_with (win, "due", NULL);
+  jr_case (&c, "this topic backed up", g_str_has_prefix (jn_window_backup_state (win), "Backed up ") &&
+           g_strcmp0 (f->asked->str, "Heaps|-|-|-") == 0 && g_strcmp0 (f->last_markdown, md) == 0 &&
+           g_strcmp0 (due2, "Tries") == 0, "state \"%s\" asked %s due %s", jn_window_backup_state (win),
+           f->asked->str, due2);
+
+  /* An edit: changed since. */
+  type (e, "\u23CE- O(log n)");
+  jn_window_save (win);
+  g_autofree char *due3 = rows_with (win, "due", NULL);
+  jr_case (&c, "changed since", g_str_has_prefix (jn_window_backup_state (win), "Changed since the last backup (") &&
+           g_strcmp0 (due3, "Heaps | Tries") == 0, "state \"%s\" due %s", jn_window_backup_state (win), due3);
+
+  /* Everything due: its Doc, the subject's folder, the Notes folder. */
+  jr_case (&c, "back up everything starts", jn_window_backup_all (win), "no");
+  wait_backup (win);
+  g_autofree char *due4 = rows_with (win, "due", NULL);
+  jr_case (&c, "everything due, with what is known",
+           g_strcmp0 (f->asked->str, "Heaps|doc-2|fold-DSA|root-1;Tries|-|fold-DSA|root-1") == 0 && *due4 == '\0' &&
+           strstr (jn_window_status (win), "Backed up 2 topics") != NULL, "asked %s due \"%s\" status %s",
+           f->asked->str, due4, jn_window_status (win));
+  int runs = f->runs;
+  jr_case (&c, "nothing due: nothing runs", !jn_window_backup_all (win) && f->runs == runs &&
+           strstr (jn_window_status (win), "already backed up") != NULL, "status %s", jn_window_status (win));
+
+  /* One topic does not read back the same: it stays due, its Doc kept. */
+  f->fail_topic = "Tries";
+  jn_window_open_topic (win, tries);
+  type (e, "- a trie");
+  jn_window_save (win);
+  jn_window_backup_all (win);
+  wait_backup (win);
+  g_autofree char *due5 = rows_with (win, "due", NULL);
+  jr_case (&c, "not verified: stays due", g_strcmp0 (due5, "Tries") == 0 &&
+           strstr (jn_window_status (win), "1 of 1 topics were not backed up") != NULL, "due %s status %s", due5,
+           jn_window_status (win));
+  f->fail_topic = NULL;
+  jn_window_backup_all (win);
+  wait_backup (win);
+  jr_case (&c, "tried again on the same Doc", g_strcmp0 (f->asked->str, "Tries|doc-1|fold-DSA|root-1") == 0,
+           "asked %s", f->asked->str);
+
+  /* Someone else can open one: said plainly. */
+  f->shared_topic = "Tries";
+  type (e, "\u23CE- b");
+  jn_window_backup_topic (win);
+  wait_backup (win);
+  jr_case (&c, "a shared Doc is pointed out", strstr (jn_window_status (win), "someone besides you") != NULL,
+           "status %s", jn_window_status (win));
+  f->shared_topic = NULL;
+
+  /* The sign-in expired: said, nothing recorded. */
+  f->expired = TRUE;
+  type (e, "\u23CE- c");
+  jn_window_backup_topic (win);
+  wait_backup (win);
+  jr_case (&c, "expired sign-in said", strstr (jn_window_status (win), "Sign in") != NULL &&
+           jn_db_drive_mark (db, tries) == JN_DRIVE_CHANGED, "status %s", jn_window_status (win));
+  f->expired = FALSE;
+
+  /* Closing with a change: it hides, backs up, then closes. */
+  type (e, "\u23CE- d");
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win));
+  gboolean hidden = win != NULL && !gtk_widget_get_visible (GTK_WIDGET (win));
+  gint64 until = g_get_monotonic_time () + 5 * G_USEC_PER_SEC;
+  while (win != NULL && g_get_monotonic_time () < until)
+    g_main_context_iteration (NULL, TRUE);
+  db = jn_db_open (path, NULL);
+  jr_case (&c, "closing backs up first", hidden && win == NULL && jn_db_drive_mark (db, tries) == JN_DRIVE_DONE,
+           "hidden=%d closed=%d", hidden, win == NULL);
+
+  /* Nothing changed: it closes at once. */
+  f = fake_drive_new ();
+  f->signed_in = TRUE;
+  win = jn_window_new (NULL, db, dir);
+  jn_window_set_drive (win, &f->base);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (50);
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (50);
+  jr_case (&c, "nothing changed: closes at once", win == NULL, "still open");
+  jr_cases_done (&c);
+  remove_tree (dir);
+}
+
 /* ---- memory: nothing keeps growing ---------------------------------------- */
 
 static gsize
@@ -1563,6 +1810,7 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/backups", test_backups);
   g_test_add_func ("/notes-ui/sidebar-highlight", test_sidebar_highlight);
   g_test_add_func ("/notes-ui/sidebar-folds", test_sidebar_folds);
+  g_test_add_func ("/notes-ui/drive", test_drive);
   g_test_add_func ("/notes-ui/no-growth", test_no_growth);
   return g_test_run ();
 }

@@ -107,6 +107,9 @@ jn_jail_default_paths (void)
   const char *helper = g_getenv ("JOURNAL_AI_HELPER");
   if (helper != NULL && g_path_is_absolute (helper))
     add (r, helper);
+  const char *drive = g_getenv ("JOURNAL_DRIVE_HELPER"); /* the same, for the Drive helper */
+  if (drive != NULL && g_path_is_absolute (drive))
+    add (r, drive);
   /* A Google sign-in file kept elsewhere ($GOOGLE_APPLICATION_CREDENTIALS):
    * that one file, read-only. */
   const char *adc = g_getenv ("GOOGLE_APPLICATION_CREDENTIALS");

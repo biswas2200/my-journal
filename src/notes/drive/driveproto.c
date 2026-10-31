@@ -60,6 +60,17 @@ jn_drive_request_to_json (const JnDriveRequest *r)
   return jn_json_to_string (b);
 }
 
+/* An http(s) address (Google's, or a test server). */
+static gboolean
+is_web (const char *s)
+{
+  if (s == NULL)
+    return FALSE;
+  if (g_str_has_prefix (s, "https://"))
+    return TRUE;
+  return g_str_has_prefix (s, "http://");
+}
+
 static gboolean
 refuse (GError **error, JnDriveRequest *out, JsonParser *p)
 {
@@ -77,8 +88,8 @@ jn_drive_request_from_json (const char *json, gssize len, JnDriveRequest *out, G
   JsonObject *o = jn_json_object (json, len, &p);
   const char *base = jn_json_str (o, "api_base"), *token = jn_json_str (o, "token");
   JsonArray *ports = jn_json_arr (o, "ports"), *items = jn_json_arr (o, "items");
-  if (base == NULL || token == NULL || ports == NULL || items == NULL ||
-      !(g_str_has_prefix (base, "https://") || g_str_has_prefix (base, "http://")))
+  gboolean web = is_web (base);
+  if (!web || token == NULL || ports == NULL || items == NULL)
     return refuse (error, out, p);
   guint np = json_array_get_length (ports), ni = json_array_get_length (items);
   if (np < 1 || np > JN_DRIVE_MAX_PORTS || ni > JN_DRIVE_MAX_ITEMS)

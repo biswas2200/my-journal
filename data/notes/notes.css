@@ -111,3 +111,10 @@ window.dialog.message box.dialog-action-area button {
 }
 window.dialog.message box.dialog-action-area button:hover { background: #22303F; }
 window.dialog.message box.dialog-action-area button:focus-visible { outline-color: #6C8EBF; }
+
+/* Google Drive: a topic the backup does not hold as it is now gets a
+ * small amber stripe; so does "Changed since the last backup". */
+.sidebar list > row.topic-row.due { box-shadow: inset 3px 0 #C9A227; }
+.page-info label.due { color: #C9A227; }
+.drive-menu { padding: 8px; min-width: 260px; }
+.drive-menu > label { padding: 4px 6px 8px 6px; }

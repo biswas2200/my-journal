@@ -11,6 +11,7 @@
 #include "editor.h"
 #include "client.h"
 #include "clock_bar.h"
+#include "driveclient.h"
 #include "notesdb.h"
 
 #define JN_TYPE_WINDOW (jn_window_get_type ())
@@ -53,6 +54,25 @@ gboolean  jn_window_is_enhancing   (JnWindow *win);
  * the open topic. Study time goes to the topic open while it ran. */
 JnClockBar *jn_window_clock_bar    (JnWindow *win);
 const char *jn_window_studied      (JnWindow *win);
+/* ---- Google Drive ------------------------------------------------------
+ * The backup to Google Drive (driveclient.h, taken over; NULL: none).
+ * Signed in, each topic shows whether it is backed up ("Backed up 3 Nov
+ * 14:05", "Changed since the last backup (1 Nov)", "Not backed up yet"),
+ * a topic that needs it is marked in the list, and closing Notes first
+ * backs up whatever changed (the window hides meanwhile, a minute at
+ * most). */
+void      jn_window_set_drive      (JnWindow *win, JnBackup *backup);
+void      jn_window_drive_sign_in  (JnWindow *win);
+void      jn_window_drive_sign_out (JnWindow *win);
+/* FALSE if nothing started (not signed in, one already running, nothing
+ * to do). */
+gboolean  jn_window_backup_topic   (JnWindow *win);
+gboolean  jn_window_backup_all     (JnWindow *win);
+gboolean  jn_window_is_backing_up  (JnWindow *win);
+/* The open topic's backup state, as shown ("" when not signed in and
+ * never backed up). */
+const char *jn_window_backup_state (JnWindow *win);
+
 /* Daily backups of the store in `dir` (notebackup.h): one now, and the
  * day's copy again when the window closes. */
 void      jn_window_set_backup_dir (JnWindow *win, const char *dir);

@@ -158,6 +158,78 @@ folder). They are study material, so the file is not encrypted.
   Notes says so and names the newest backup. To restore one: keep Notes
   closed, then copy it over `notes.db`.
 
+## Google Drive backup
+
+Notes can keep a copy of your notes in **your own Google Drive**, as
+Google Docs you can open, read and reformat anywhere:
+
+```
+My Drive
+└── Notes
+    ├── DSA
+    │   ├── Prefix sum        (a Google Doc)
+    │   └── Binary search
+    └── Operating Systems
+        └── Paging
+```
+
+- **One Doc per topic, updated in place.** Every session of the topic,
+  with its date, sources and time studied, as Export .md writes it.
+  Google keeps every earlier version (in the Doc: File, Version
+  history), so the 1 Nov text is still there after the 3 Nov backup.
+- **☁ Drive** in the header: **Sign in with Google**, **Back up this
+  topic**, **Back up everything**, **Sign out**. And **when you close
+  Notes**, whatever changed is backed up first (the window hides
+  meanwhile, a minute at most).
+- **You can see what is backed up.** Under each topic: "Backed up 3 Nov
+  14:05", "Changed since the last backup (1 Nov)" (in amber) or "Not
+  backed up yet"; in the list, a topic waiting for a backup has an
+  amber stripe.
+- **Nothing is lost in between.** Your notes on this laptop are never
+  changed by a backup. A backup counts only after Notes has read the
+  Doc back and found the same text; one that does not match, a full
+  Drive or no connection is said in plain words, and the topic stays
+  marked for the next backup.
+- **Only you.** Notes asks Google only for `drive.file`: it can see and
+  change only the files it made, never the rest of your Drive. The Docs
+  are in your My Drive and shared with no one; after every backup Notes
+  checks, and tells you in red if anyone else can open one. Your
+  sign-in is kept in your login keyring; the network work is done by a
+  locked-down helper (`libexec/journal-drive`: no files, web ports
+  only) that sees a one-hour token, never the sign-in. **Turn on
+  2-Step Verification** for your Google account: that is what keeps
+  others out of your Drive.
+- Renaming or moving the Notes folder or a Doc in Drive is fine: Notes
+  remembers them by Google's id. Delete one (or bin it) and the next
+  backup makes it again.
+
+### Setting it up (once)
+
+Google lets only a registered app show its sign-in page, so you make a
+small "app" in your own Google Cloud project (5 minutes, free):
+
+1. [Google Cloud Console](https://console.cloud.google.com/), your
+   project: **APIs & Services → Library**, turn on the **Google Drive
+   API**.
+2. **APIs & Services → OAuth consent screen**: user type **External**,
+   an app name (e.g. "Journal Notes"), your email. Then set its
+   publishing status to **In production**: in "Testing" Google ends the
+   sign-in after 7 days. An app only you use needs no review; Google
+   shows an "unverified app" notice once, which you can pass.
+3. **APIs & Services → Credentials → Create credentials → OAuth client
+   ID**, type **Desktop app**. Download its JSON.
+4. Save it as `~/.config/journal-notes/google-client.json`:
+
+   ```bash
+   mkdir -p ~/.config/journal-notes && mv ~/Downloads/client_secret_*.json ~/.config/journal-notes/google-client.json && chmod 600 ~/.config/journal-notes/google-client.json
+   ```
+5. In Notes: **☁ Drive → Sign in with Google**, and allow access on
+   Google's page.
+
+To remove Notes' access completely: **☁ Drive → Sign out** (it revokes
+the sign-in at Google), or at
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
 ## AI enhanced copy
 
 **✦ Enhance** (`Ctrl+Shift+E`) writes an enhanced copy of the open
@@ -413,7 +485,7 @@ what only you can check is in [REPORT.md](REPORT.md).
 
 | Check | Result (30 Oct 2026) | How |
 | --- | --- | --- |
-| Unit, UI and integration tests | 42 suites, all pass | `meson test -C build` |
+| Unit, UI and integration tests | 48 suites, all pass | `meson test -C build` |
 | Network jail: every non-local socket family, random and 64-bit domains, a real TCP listener that must receive nothing, io_uring, x32, threads, child programs | all refused | `tests/test_netjail.c` |
 | AppArmor profile, probed from outside without the jail | TCP, UDP, IPv6, DNS via resolved and the link portal refused | `tools/check-apparmor.sh` |
 | Crash safety: writer killed with SIGKILL at random moments, 50 times per run | every acknowledged save survives and decrypts; file passes `PRAGMA integrity_check`; a PIN change cut off half-way always leaves the old or new PIN working | `tests/test_crash.c` |
@@ -483,6 +555,11 @@ src/notes/    `journal-notes`: Notes (study notes, AI enhanced copy)
               (the stopwatch and timer, no real clock inside), markdown
               (reading the copy's Markdown), svgsafe (diagram safety),
               notebackup (daily backups, rescue copies)
+  drive/      driveproto (the Drive helper's messages, Drive's answers,
+              the "same text" check), oauth (Sign in with Google, PKCE),
+              drivesync + helper.c = libexec/journal-drive (the
+              locked-down Drive work), driveclient (sign-in, keyring,
+              starting the helper)
   ai/         textify (page to text), netguard (which links and
               addresses), aiproto (sign-in, Gemini request and answer,
               Notes <-> helper messages), fetch (Sources), client (Notes'

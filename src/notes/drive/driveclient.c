@@ -344,7 +344,7 @@ google_sign_in (JnBackup *self, GCancellable *cancel, JnSignInDone done, gpointe
   s->state = jn_oauth_state_new ();
   g_autofree char *challenge = jn_oauth_challenge (s->verifier);
   g_autofree char *page = jn_oauth_auth_url (&s->client, s->redirect, challenge, s->state);
-  if (g->auth_url != NULL && g_str_has_prefix (page, JN_OAUTH_AUTH_URL))
+  if (g->auth_url != NULL) /* a test's own sign-in page */
     {
       g_autofree char *moved = g_strconcat (g->auth_url, page + strlen (JN_OAUTH_AUTH_URL), NULL);
       g_free (page);
@@ -420,7 +420,10 @@ on_helper_done (GObject *src, GAsyncResult *res, gpointer data)
   else
     {
       /* An expired sign-in: forget it, so the window offers Sign in. */
-      if (a.error != NULL && strstr (a.error, "Sign in") != NULL && a.n_results == 0)
+      gboolean expired = a.error != NULL && a.n_results == 0;
+      if (expired)
+        expired = strstr (a.error, "Sign in") != NULL;
+      if (expired)
         forget (job->g);
       job_finish (job, &a, NULL);
     }

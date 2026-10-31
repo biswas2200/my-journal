@@ -98,6 +98,12 @@ on_activate (GApplication *app)
   const char *helper = g_getenv ("JOURNAL_AI_HELPER");
   JnGeminiConfig ai = { helper != NULL && *helper != '\0' ? helper : JN_HELPER_PATH, NULL, NULL, NULL, NULL, { 0 }, 0 };
   jn_window_set_enhancer (win, jn_gemini_enhancer_new (&ai));
+  /* Google Drive backup; the helper next to Notes ($JOURNAL_DRIVE_HELPER:
+   * a build tree). The sign-in lives in your login keyring. */
+  const char *drive_helper = g_getenv ("JOURNAL_DRIVE_HELPER");
+  JnBackupConfig drive = { 0 };
+  drive.helper = drive_helper != NULL && *drive_helper != '\0' ? drive_helper : JN_DRIVE_HELPER_PATH;
+  jn_window_set_drive (win, jn_google_backup_new (&drive));
   if (g_strcmp0 (g_getenv ("JOURNAL_LAUNCHER"), "1") == 0)
     jn_window_set_navigation (win, on_leave, NULL);
   gtk_window_present (GTK_WINDOW (win));

@@ -180,33 +180,7 @@ notes_resources = gnome.compile_resources('notes-resources',
   c_name : 'notes',
 )
 rsvg_dep = dependency('librsvg-2.0', version : '>= 2.52')
-notes_ui_lib = static_library('notes-ui',
-  'src/notes/ui/editor.c',
-  'src/notes/ui/md_view.c',
-  'src/notes/ui/clock_bar.c',
-  'src/notes/ui/notes_window.c',
-  notes_resources[1],
-  dependencies : [notes_core_dep, notes_client_dep, gtk_dep, rsvg_dep, programs_dep],
-)
-notes_ui_dep = declare_dependency(
-  link_with : notes_ui_lib,
-  sources : notes_resources,
-  include_directories : include_directories('src/notes/ui'),
-  dependencies : [notes_core_dep, notes_client_dep, gtk_dep, rsvg_dep, programs_dep],
-)
-notes_exe = executable('journal-notes', 'src/notes/main.c',
-  dependencies : notes_ui_dep,
-  c_args : '-DJN_HELPER_PATH="@0@"'.format(program_dir / 'journal-ai'),
-  install : true,
-  install_dir : get_option('libexecdir'),
-)
-# Notes' AI helper: one locked-down run per "Enhance".
-ai_exe = executable('journal-ai', 'src/notes/ai/helper.c',
-  dependencies : [notes_fetch_dep, notes_core_dep],
-  install : true,
-  install_dir : get_option('libexecdir'),
-)
-# Notes' Drive helper: one locked-down run per backup.
+# The Drive helper's work (Google Drive, over the network).
 notes_drive_net_lib = static_library('notes-drive-net', 'src/notes/drive/drivesync.c',
   dependencies : [notes_drive_dep, soup_dep],
 )
@@ -222,6 +196,34 @@ notes_drive_client_dep = declare_dependency(
   link_with : notes_drive_client_lib,
   dependencies : [notes_drive_dep, soup_dep, secret_dep],
 )
+notes_ui_lib = static_library('notes-ui',
+  'src/notes/ui/editor.c',
+  'src/notes/ui/md_view.c',
+  'src/notes/ui/clock_bar.c',
+  'src/notes/ui/notes_window.c',
+  notes_resources[1],
+  dependencies : [notes_core_dep, notes_client_dep, notes_drive_client_dep, gtk_dep, rsvg_dep, programs_dep],
+)
+notes_ui_dep = declare_dependency(
+  link_with : notes_ui_lib,
+  sources : notes_resources,
+  include_directories : include_directories('src/notes/ui'),
+  dependencies : [notes_core_dep, notes_client_dep, notes_drive_client_dep, gtk_dep, rsvg_dep, programs_dep],
+)
+notes_exe = executable('journal-notes', 'src/notes/main.c',
+  dependencies : notes_ui_dep,
+  c_args : ['-DJN_HELPER_PATH="@0@"'.format(program_dir / 'journal-ai'),
+            '-DJN_DRIVE_HELPER_PATH="@0@"'.format(program_dir / 'journal-drive')],
+  install : true,
+  install_dir : get_option('libexecdir'),
+)
+# Notes' AI helper: one locked-down run per "Enhance".
+ai_exe = executable('journal-ai', 'src/notes/ai/helper.c',
+  dependencies : [notes_fetch_dep, notes_core_dep],
+  install : true,
+  install_dir : get_option('libexecdir'),
+)
+# Notes' Drive helper: one locked-down run per backup.
 drive_exe = executable('journal-drive', 'src/notes/drive/helper.c',
   dependencies : [notes_drive_net_dep, notes_core_dep],
   install : true,

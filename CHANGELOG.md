@@ -20,6 +20,23 @@
 - A backup cut off by a crash no longer leaves SQLite's side file
   behind, where the next backup could have picked it up.
 
+### Notes: back up to your own Google Drive
+
+- **Sign in with Google** (☁ Drive in the header): Google's page opens
+  in your browser; Notes asks only for the files it makes itself
+  (`drive.file`) and keeps the sign-in in your login keyring.
+- **Back up this topic** / **Back up everything**, and automatically
+  when Notes closes: My Drive / Notes / <subject> / <topic>, one Google
+  Doc per topic with its headings, lists and links, updated in place
+  (Google keeps the earlier versions).
+- Each topic shows "Backed up 3 Nov 14:05" or "Changed since the last
+  backup" (amber); topics waiting for a backup are marked in the list.
+- A backup counts only once the Doc reads back with the same text;
+  anyone besides you being able to open a Doc is pointed out.
+- The Drive work runs in a locked-down helper (`journal-drive`) that
+  sees only a one-hour token. One-time setup: see README, "Google Drive
+  backup".
+
 ### Faster with many notes
 
 - Measured with 10 000 topics and 100 000 sessions. The sidebar now

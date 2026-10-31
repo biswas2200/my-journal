@@ -41,6 +41,13 @@ struct _JnWindow {
   GtkWidget    *enhance_button, *split, *ai_pane, *ai_title;
   JnMdView     *ai_view;
   gboolean      reference;     /* the topic reference is showing */
+
+  JnBackup     *drive;          /* Google Drive backup, or NULL */
+  GCancellable *drive_cancel;
+  gboolean      backing_up;
+  gboolean      closing;        /* hidden, backing up before it closes */
+  gboolean      closing_backed; /* that backup is over: close for real */
+  GtkWidget    *drive_button, *drive_line, *sign_in, *backup_topic, *backup_all, *sign_out, *backup_state;
 };
 
 G_DEFINE_FINAL_TYPE (JnWindow, jn_window, GTK_TYPE_APPLICATION_WINDOW)
@@ -138,6 +145,8 @@ update_studied (JnWindow *win)
 }
 
 /* Without a topic there is nothing to write in. */
+static void update_drive (JnWindow *win);
+
 static void
 update_page (JnWindow *win)
 {
@@ -156,6 +165,7 @@ update_page (JnWindow *win)
   jn_editor_set_editable (win->editor, open);
   update_title (win);
   update_span (win);
+  update_drive (win);
 }
 
 /* ---- saving ------------------------------------------------------------ */
@@ -195,6 +205,7 @@ rescue (JnWindow *win, const char *body, const char *sources, GError **error)
 }
 
 static gboolean on_save_timeout (gpointer data);
+static void refresh_drive_mark (JnWindow *win);
 
 void
 jn_window_save (JnWindow *win)
@@ -210,6 +221,7 @@ jn_window_save (JnWindow *win)
       win->rescued = FALSE;
       g_autoptr (GDateTime) t = g_date_time_new_now_local ();
       g_autofree char *at = g_date_time_format (t, "Saved %H:%M");
+      refresh_drive_mark (win);
       if (win->rescue_path != NULL && win->rescue_session == win->session)
         {
           g_autofree char *msg = g_strdup_printf ("%s. Saving works again; the copy in Documents/Notes/Unsaved is "
@@ -506,7 +518,15 @@ static void
 add_topic_row (gint64 id, const char *name, gpointer user)
 {
   JnWindow *win = user;
-  row (win, ROW_TOPIC, id, name, id == win->topic ? OPEN : PLAIN);
+  GtkWidget *r = row (win, ROW_TOPIC, id, name, id == win->topic ? OPEN : PLAIN);
+  /* Signed in: a topic the backup does not hold as it is now. */
+  if (win->drive != NULL && win->drive->signed_in (win->drive) && jn_db_drive_mark (win->db, id) != JN_DRIVE_DONE)
+    {
+      gtk_widget_add_css_class (r, "due");
+      gtk_widget_set_tooltip_text (r, jn_db_drive_mark (win->db, id) == JN_DRIVE_NEVER
+                                        ? "Not backed up to Google Drive yet"
+                                        : "Changed since its last backup to Google Drive");
+    }
   if (id == win->topic)
     {
       RowMark page = win->subject_picked ? PLAIN : CURRENT; /* what the page shows */
@@ -968,6 +988,20 @@ on_close_request (GtkWindow *window)
   /* Text that is neither saved nor rescued: Notes stays open. */
   if (win->dirty && !win->rescued)
     return TRUE;
+  /* Whatever changed goes to Google Drive first; the window hides
+   * meanwhile and closes when that is done (a minute at most). */
+  if (win->closing)
+    return TRUE;
+  if (!win->closing_backed)
+    {
+      win->closing = TRUE; /* so the backup knows to close the window after */
+      if (jn_window_backup_all (win))
+        {
+          gtk_widget_set_visible (GTK_WIDGET (win), FALSE);
+          return TRUE;
+        }
+      win->closing = FALSE;
+    }
   if (win->ai_cancel != NULL)
     g_cancellable_cancel (win->ai_cancel);
   return FALSE;
@@ -1101,6 +1135,8 @@ on_timer_finished (JnClockBar *bar, gpointer data)
     }
 }
 
+static GtkWidget *build_drive_menu (JnWindow *win);
+
 static void
 jn_window_dispose (GObject *object)
 {
@@ -1119,6 +1155,12 @@ jn_window_dispose (GObject *object)
   if (win->enhancer != NULL)
     win->enhancer->free (win->enhancer);
   win->enhancer = NULL;
+  if (win->drive_cancel != NULL)
+    g_cancellable_cancel (win->drive_cancel);
+  g_clear_object (&win->drive_cancel);
+  if (win->drive != NULL)
+    win->drive->free (win->drive);
+  win->drive = NULL;
   g_clear_pointer (&win->db, jn_db_close);
   g_clear_pointer (&win->export_dir, g_free);
   G_OBJECT_CLASS (jn_window_parent_class)->dispose (object);
@@ -1151,6 +1193,7 @@ jn_window_init (JnWindow *win)
   gtk_header_bar_pack_start (GTK_HEADER_BAR (header), win->title);
   win->export_button = header_button ("Export .md", "Save the whole topic as Markdown (Ctrl+E)",
                                       G_CALLBACK (on_export), win);
+  gtk_header_bar_pack_end (GTK_HEADER_BAR (header), build_drive_menu (win));
   gtk_header_bar_pack_end (GTK_HEADER_BAR (header), win->export_button);
   win->enhance_button = header_button ("\xe2\x9c\xa6 Enhance", "Write an enhanced copy from your note and its sources",
                                        G_CALLBACK (on_enhance), win);
@@ -1203,6 +1246,10 @@ jn_window_init (JnWindow *win)
   gtk_label_set_ellipsize (GTK_LABEL (win->studied), PANGO_ELLIPSIZE_END);
   gtk_widget_add_css_class (win->studied, "faint");
   gtk_box_append (GTK_BOX (info), win->studied);
+  win->backup_state = gtk_label_new (""); /* backed up, or changed since */
+  gtk_label_set_ellipsize (GTK_LABEL (win->backup_state), PANGO_ELLIPSIZE_END);
+  gtk_widget_add_css_class (win->backup_state, "faint");
+  gtk_box_append (GTK_BOX (info), win->backup_state);
   win->new_session = header_button ("+ New session", "Start another session on this topic (Ctrl+N)",
                                     G_CALLBACK (on_new_session), win);
   gtk_box_append (GTK_BOX (info), win->new_session);
@@ -1313,4 +1360,389 @@ const char *
 jn_window_rescue_path (JnWindow *win)
 {
   return win->rescue_path;
+}
+
+/* ---- Google Drive ----------------------------------------------------------------- */
+
+static gboolean
+drive_signed_in (JnWindow *win)
+{
+  return win->drive != NULL && win->drive->signed_in (win->drive);
+}
+
+/* "3 Nov 14:05" (local time). */
+static char *
+when (gint64 t)
+{
+  g_autoptr (GDateTime) d = g_date_time_new_from_unix_local (t);
+  return g_date_time_format (d, "%-d %b %H:%M");
+}
+
+/* The open topic's line: backed up, changed since, or not yet. */
+static char *
+backup_state_text (JnWindow *win)
+{
+  if (win->topic == 0)
+    return g_strdup ("");
+  JnDriveState st = { 0 };
+  gboolean known = jn_db_drive_get (win->db, win->topic, &st);
+  char *text;
+  if (!known)
+    text = g_strdup (drive_signed_in (win) ? "Not backed up yet" : "");
+  else
+    {
+      g_autofree char *at = when (st.synced);
+      text = jn_db_drive_mark (win->db, win->topic) == JN_DRIVE_DONE
+               ? g_strdup_printf ("Backed up %s", at)
+               : g_strdup_printf ("Changed since the last backup (%s)", at);
+    }
+  jn_drive_state_clear (&st);
+  return text;
+}
+
+static void
+update_drive (JnWindow *win)
+{
+  if (win->drive_button == NULL)
+    return; /* still being built */
+  gboolean in = drive_signed_in (win);
+  gtk_widget_set_visible (win->drive_button, win->drive != NULL);
+  gtk_widget_set_visible (win->sign_in, !in);
+  gtk_widget_set_visible (win->backup_topic, in);
+  gtk_widget_set_visible (win->backup_all, in);
+  gtk_widget_set_visible (win->sign_out, in);
+  gtk_widget_set_sensitive (win->backup_topic, in && win->topic != 0 && !win->backing_up);
+  gtk_widget_set_sensitive (win->backup_all, in && !win->backing_up);
+  gtk_label_set_text (GTK_LABEL (win->drive_line),
+                      win->backing_up ? "Backing up to Google Drive\xe2\x80\xa6"
+                      : in            ? "Signed in to Google Drive. Notes can see only the files it made."
+                                      : "Back up your notes to your own Google Drive, as Google Docs.");
+  g_autofree char *state = backup_state_text (win);
+  gtk_label_set_text (GTK_LABEL (win->backup_state), state);
+  gtk_widget_set_visible (win->backup_state, *state != '\0');
+  if (jn_db_drive_mark (win->db, win->topic) == JN_DRIVE_CHANGED)
+    gtk_widget_add_css_class (win->backup_state, "due");
+  else
+    gtk_widget_remove_css_class (win->backup_state, "due");
+}
+
+typedef struct {
+  JnWindow *win;      /* a reference, for as long as the backup runs */
+  GArray   *versions; /* each item's version when it was sent */
+  gboolean  closing;
+  guint     limit_id; /* the minute allowed when closing */
+} Run;
+
+static gboolean
+on_close_limit (gpointer data)
+{
+  Run *run = data;
+  run->limit_id = 0;
+  g_cancellable_cancel (run->win->drive_cancel);
+  return G_SOURCE_REMOVE;
+}
+
+/* What the backup did, recorded and said in plain words. */
+static void
+apply_answer (JnWindow *win, const JnDriveAnswer *a, GArray *versions)
+{
+  if (a->root != NULL)
+    jn_db_set_setting (win->db, "drive_root", a->root);
+  int done = 0, failed = 0;
+  const char *first_error = NULL;
+  g_autofree char *shared_topic = NULL;
+  gint64 t = now ();
+  for (gsize i = 0; i < a->n_results; i++)
+    {
+      const JnDriveResult *r = &a->results[i];
+      gint64 subject = 0;
+      g_autofree char *sn = NULL, *tn = NULL;
+      if (!jn_db_get_topic (win->db, r->topic, &subject, &sn, &tn))
+        continue; /* deleted meanwhile */
+      if (r->folder != NULL)
+        jn_db_set_drive_folder (win->db, subject, r->folder);
+      /* The Doc is kept even when not verified, so the next backup
+       * replaces it instead of making a second one; version -1 keeps the
+       * topic due. */
+      if (r->doc != NULL)
+        jn_db_drive_set (win->db, r->topic, r->doc, r->link, r->verified ? g_array_index (versions, gint64, i) : -1, t);
+      if (r->verified)
+        done++;
+      else
+        {
+          failed++;
+          if (first_error == NULL)
+            first_error = r->error;
+        }
+      if (r->shared && shared_topic == NULL)
+        shared_topic = g_steal_pointer (&tn);
+    }
+  g_autofree char *at = when (t);
+  if (a->error != NULL)
+    set_alarm (win, a->error);
+  else if (shared_topic != NULL)
+    {
+      g_autofree char *msg = g_strdup_printf ("Backed up. Careful: someone besides you can open \xe2\x80\x9c%s\xe2\x80\x9d "
+                                              "in Google Drive. Check its sharing there if you did not mean to.",
+                                              shared_topic);
+      set_alarm (win, msg);
+    }
+  else if (failed > 0)
+    {
+      g_autofree char *msg = g_strdup_printf ("%d of %d topics were not backed up: %s They stay marked, and the "
+                                              "next backup tries them again.", failed, done + failed,
+                                              first_error != NULL ? first_error : "no reason given.");
+      set_alarm (win, msg);
+    }
+  else
+    {
+      g_autofree char *msg = g_strdup_printf ("Backed up %d %s to Google Drive at %s.", done,
+                                              done == 1 ? "topic" : "topics", at);
+      set_status (win, msg);
+    }
+}
+
+static void
+on_backup_done (const JnDriveAnswer *answer, const char *error, gpointer user)
+{
+  Run *run = user;
+  JnWindow *win = run->win;
+  g_clear_handle_id (&run->limit_id, g_source_remove);
+  win->backing_up = FALSE;
+  if (answer != NULL)
+    apply_answer (win, answer, run->versions);
+  else
+    set_alarm (win, error);
+  rebuild (win);
+  update_drive (win);
+  if (run->closing)
+    {
+      win->closing = FALSE;
+      win->closing_backed = TRUE;
+      gtk_window_close (GTK_WINDOW (win)); /* now for real */
+    }
+  g_array_unref (run->versions);
+  g_object_unref (win);
+  g_free (run);
+}
+
+static void
+collect_due (gint64 id, gpointer user)
+{
+  g_array_append_val ((GArray *) user, id);
+}
+
+/* Backs up `topics`; FALSE if it did not start. */
+static gboolean
+start_backup (JnWindow *win, GArray *topics, gboolean closing)
+{
+  if (!drive_signed_in (win) || win->backing_up || topics->len == 0)
+    return FALSE;
+  close_page (win); /* the latest text, saved first */
+  JnDriveItem *items = g_new0 (JnDriveItem, topics->len);
+  GArray *versions = g_array_new (FALSE, FALSE, sizeof (gint64));
+  gsize n = 0;
+  for (guint i = 0; i < topics->len; i++)
+    {
+      gint64 id = g_array_index (topics, gint64, i), subject = 0;
+      g_autofree char *sn = NULL, *tn = NULL;
+      if (!jn_db_get_topic (win->db, id, &subject, &sn, &tn))
+        continue;
+      gint64 version = jn_db_topic_version (win->db, id); /* before the text: a later edit stays due */
+      JnDriveState st = { 0 };
+      jn_db_drive_get (win->db, id, &st);
+      items[n] = (JnDriveItem){ id, g_steal_pointer (&sn), g_steal_pointer (&tn), jn_export_topic (win->db, id),
+                                g_steal_pointer (&st.doc), jn_db_drive_folder (win->db, subject) };
+      jn_drive_state_clear (&st);
+      g_array_append_val (versions, version);
+      n++;
+    }
+  g_autofree char *root = jn_db_get_setting (win->db, "drive_root");
+  Run *run = g_new0 (Run, 1);
+  run->win = g_object_ref (win);
+  run->versions = versions;
+  run->closing = closing;
+  g_clear_object (&win->drive_cancel);
+  win->drive_cancel = g_cancellable_new ();
+  if (closing)
+    run->limit_id = g_timeout_add_seconds (60, on_close_limit, run);
+  win->backing_up = TRUE;
+  g_autofree char *msg = g_strdup_printf ("Backing up %zu %s to Google Drive\xe2\x80\xa6", n, n == 1 ? "topic" : "topics");
+  set_status (win, msg);
+  update_drive (win);
+  win->drive->run (win->drive, root, items, n, win->drive_cancel, on_backup_done, run);
+  for (gsize i = 0; i < n; i++)
+    {
+      g_free (items[i].subject);
+      g_free (items[i].name);
+      g_free (items[i].markdown);
+      g_free (items[i].doc);
+      g_free (items[i].folder);
+    }
+  g_free (items);
+  return TRUE;
+}
+
+gboolean
+jn_window_backup_topic (JnWindow *win)
+{
+  if (win->topic == 0)
+    return FALSE;
+  g_autoptr (GArray) one = g_array_new (FALSE, FALSE, sizeof (gint64));
+  g_array_append_val (one, win->topic);
+  return start_backup (win, one, FALSE);
+}
+
+gboolean
+jn_window_backup_all (JnWindow *win)
+{
+  if (!drive_signed_in (win) || win->backing_up)
+    return FALSE;
+  jn_window_save (win); /* so the open topic counts as changed */
+  g_autoptr (GArray) due = g_array_new (FALSE, FALSE, sizeof (gint64));
+  jn_db_foreach_drive_due (win->db, collect_due, due);
+  if (due->len == 0)
+    {
+      if (!win->closing && gtk_widget_get_visible (GTK_WIDGET (win)))
+        set_status (win, "Everything is already backed up to Google Drive.");
+      return FALSE;
+    }
+  return start_backup (win, due, win->closing);
+}
+
+gboolean
+jn_window_is_backing_up (JnWindow *win)
+{
+  return win->backing_up;
+}
+
+const char *
+jn_window_backup_state (JnWindow *win)
+{
+  return gtk_label_get_text (GTK_LABEL (win->backup_state));
+}
+
+static void
+on_signed_in (gboolean ok, const char *error, gpointer user)
+{
+  JnWindow *win = user;
+  if (ok)
+    set_status (win, "Signed in to Google Drive. Back up a topic, or everything, from the \xe2\x98\x81 Drive menu.");
+  else
+    set_alarm (win, error);
+  rebuild (win);
+  update_drive (win);
+  g_object_unref (win);
+}
+
+void
+jn_window_drive_sign_in (JnWindow *win)
+{
+  if (win->drive == NULL)
+    return;
+  if (!win->drive->can_sign_in (win->drive))
+    {
+      g_autofree char *path = jn_backup_client_path ();
+      g_autofree char *msg = g_strdup_printf ("To back up to Google Drive, Notes needs your Google client file at %s "
+                                              "(see README, \xe2\x80\x9cGoogle Drive backup\xe2\x80\x9d).", path);
+      set_alarm (win, msg);
+      return;
+    }
+  set_status (win, "Opening Google's sign-in page in your browser\xe2\x80\xa6");
+  win->drive->sign_in (win->drive, NULL, on_signed_in, g_object_ref (win));
+}
+
+void
+jn_window_drive_sign_out (JnWindow *win)
+{
+  if (win->drive == NULL || !drive_signed_in (win))
+    return;
+  win->drive->sign_out (win->drive);
+  set_status (win, "Signed out of Google Drive. Your backups stay in your Drive.");
+  rebuild (win);
+  update_drive (win);
+}
+
+void
+jn_window_set_drive (JnWindow *win, JnBackup *backup)
+{
+  if (win->drive != NULL)
+    win->drive->free (win->drive);
+  win->drive = backup;
+  rebuild (win);
+  update_drive (win);
+}
+
+/* The ☁ Drive menu's buttons: each closes the menu, then acts. */
+static void
+on_drive_item (GtkButton *b, gpointer data)
+{
+  JnWindow *win = data;
+  gtk_menu_button_popdown (GTK_MENU_BUTTON (win->drive_button));
+  GtkWidget *w = GTK_WIDGET (b);
+  if (w == win->sign_in)
+    jn_window_drive_sign_in (win);
+  else if (w == win->backup_topic)
+    jn_window_backup_topic (win);
+  else if (w == win->backup_all)
+    jn_window_backup_all (win);
+  else if (w == win->sign_out)
+    jn_window_drive_sign_out (win);
+}
+
+static GtkWidget *
+drive_item (JnWindow *win, GtkWidget *box, const char *label)
+{
+  GtkWidget *b = gtk_button_new_with_label (label);
+  gtk_widget_add_css_class (b, "flat");
+  gtk_widget_set_halign (gtk_button_get_child (GTK_BUTTON (b)), GTK_ALIGN_START);
+  g_signal_connect (b, "clicked", G_CALLBACK (on_drive_item), win);
+  gtk_box_append (GTK_BOX (box), b);
+  return b;
+}
+
+static GtkWidget *
+build_drive_menu (JnWindow *win)
+{
+  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
+  gtk_widget_add_css_class (box, "drive-menu");
+  win->drive_line = gtk_label_new ("");
+  gtk_label_set_wrap (GTK_LABEL (win->drive_line), TRUE);
+  gtk_label_set_max_width_chars (GTK_LABEL (win->drive_line), 34);
+  gtk_label_set_xalign (GTK_LABEL (win->drive_line), 0.0f);
+  gtk_widget_add_css_class (win->drive_line, "faint");
+  gtk_box_append (GTK_BOX (box), win->drive_line);
+  win->sign_in = drive_item (win, box, "Sign in with Google");
+  win->backup_topic = drive_item (win, box, "Back up this topic");
+  win->backup_all = drive_item (win, box, "Back up everything");
+  win->sign_out = drive_item (win, box, "Sign out");
+  GtkWidget *pop = gtk_popover_new ();
+  gtk_popover_set_child (GTK_POPOVER (pop), box);
+  win->drive_button = gtk_menu_button_new ();
+  gtk_menu_button_set_label (GTK_MENU_BUTTON (win->drive_button), "\xe2\x98\x81 Drive");
+  gtk_menu_button_set_popover (GTK_MENU_BUTTON (win->drive_button), pop);
+  gtk_widget_add_css_class (win->drive_button, "nav");
+  gtk_widget_set_tooltip_text (win->drive_button, "Back up to Google Drive");
+  gtk_widget_set_visible (win->drive_button, FALSE);
+  return win->drive_button;
+}
+
+/* After a save: the open topic's backup state and its mark in the list
+ * (the list itself is not rebuilt on every save; see on_save_timeout). */
+static void
+refresh_drive_mark (JnWindow *win)
+{
+  update_drive (win);
+  if (!drive_signed_in (win) || win->topic == 0)
+    return;
+  JnDriveMark mark = jn_db_drive_mark (win->db, win->topic);
+  for (GtkWidget *r = gtk_widget_get_first_child (win->list); r != NULL; r = gtk_widget_get_next_sibling (r))
+    if (GPOINTER_TO_INT (g_object_get_data (G_OBJECT (r), "jn-kind")) == ROW_TOPIC &&
+        *(gint64 *) g_object_get_data (G_OBJECT (r), "jn-id") == win->topic)
+      {
+        if (mark == JN_DRIVE_DONE)
+          gtk_widget_remove_css_class (r, "due");
+        else
+          gtk_widget_add_css_class (r, "due");
+      }
 }
