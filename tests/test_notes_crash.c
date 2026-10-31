@@ -59,6 +59,8 @@ note_version (int n)
 static int
 version_of (const char *body)
 {
+  if (body != NULL && *body == '\0')
+    return 0; /* killed before its first save (seen under Valgrind) */
   if (body == NULL || !g_str_has_prefix (body, "# Heaps"))
     return -1;
   int n = 0;
