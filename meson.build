@@ -206,6 +206,19 @@ ai_exe = executable('journal-ai', 'src/notes/ai/helper.c',
   install : true,
   install_dir : get_option('libexecdir'),
 )
+# Notes' Drive helper: one locked-down run per backup.
+notes_drive_net_lib = static_library('notes-drive-net', 'src/notes/drive/drivesync.c',
+  dependencies : [notes_drive_dep, soup_dep],
+)
+notes_drive_net_dep = declare_dependency(
+  link_with : notes_drive_net_lib,
+  dependencies : [notes_drive_dep, soup_dep],
+)
+drive_exe = executable('journal-drive', 'src/notes/drive/helper.c',
+  dependencies : [notes_drive_net_dep, notes_core_dep],
+  install : true,
+  install_dir : get_option('libexecdir'),
+)
 launcher_exe = executable('journal', 'src/launcher/main.c',
   dependencies : [gtk_dep, programs_dep],
   c_args : ['-DJR_PROGRAM_DIR="@0@"'.format(program_dir), '-DJR_VERSION="@0@"'.format(meson.project_version())],

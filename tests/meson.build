@@ -36,6 +36,10 @@ test('driveproto', isolated, args : [exe], env : test_env, suite : 'core')
 exe = executable('test_oauth', 'test_oauth.c', dependencies : notes_drive_dep)
 test('oauth', isolated, args : [exe], env : test_env, suite : 'core')
 
+# The real Drive helper against a fake Google Drive on this machine.
+exe = executable('test_drive_helper', 'test_drive_helper.c', dependencies : [notes_drive_dep, soup_dep])
+test('drive-helper', isolated, args : [exe, drive_exe], env : test_env, suite : 'sandbox', timeout : 60)
+
 exe = executable('test_ai_helper', 'test_ai_helper.c', dependencies : [notes_ai_dep, soup_dep])
 test('ai-helper', isolated, args : [exe, ai_exe], env : test_env, suite : 'sandbox', timeout : 60)
 
