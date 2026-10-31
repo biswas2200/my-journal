@@ -1,0 +1,70 @@
+name: Something is broken
+description: A crash, lost or wrong data, a button that does nothing, an error message.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting it. Please **do not paste your journal or notes** here, and blur
+        anything private in screenshots: this page is public.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Where did it happen?
+      options:
+        - Start screen
+        - Journal
+        - Notes
+        - "Notes: Google Drive backup"
+        - "Notes: AI enhanced copy"
+        - "Notes: study stopwatch / timer"
+        - Installing or updating
+        - Somewhere else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you saw, in your own words. Copy any error message exactly.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen again
+      placeholder: |
+        1. Open Notes
+        2. Click …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or a screen recording
+      description: Drag and drop images or a video here (blur anything private).
+  - type: dropdown
+    id: often
+    attributes:
+      label: How often?
+      options:
+        - Every time
+        - Sometimes
+        - Once
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Filled in by the app's "Report a bug" button; otherwise run `journal --version`.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Filled in by the app (distribution, kernel, GTK).

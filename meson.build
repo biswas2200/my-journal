@@ -65,6 +65,15 @@ programs_dep = declare_dependency(
   dependencies : glib_dep,
 )
 
+# Reporting a bug, a UI problem or an idea (the start screen and Notes):
+# the GitHub form's address. Plain GLib, nothing of either program.
+report_lib = static_library('journal-report', 'src/shared/report.c', dependencies : glib_dep)
+report_dep = declare_dependency(
+  link_with : report_lib,
+  include_directories : include_directories('src/shared'),
+  dependencies : glib_dep,
+)
+
 # Notes' own core: plain logic with no UI and nothing of the Journal.
 notes_core_inc = include_directories('src/notes/core')
 gio_dep = dependency('gio-2.0', version : '>= 2.76')

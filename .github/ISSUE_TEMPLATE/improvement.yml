@@ -1,0 +1,32 @@
+name: Idea or improvement
+description: Something that would make Journal or Notes better for you.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why? What are you trying to do?
+      description: The situation it comes up in helps more than a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Sketches or screenshots
+      description: Optional. Drag and drop them here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Filled in by the app; otherwise run `journal --version`.
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Filled in by the app.

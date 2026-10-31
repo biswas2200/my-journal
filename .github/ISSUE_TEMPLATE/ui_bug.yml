@@ -1,0 +1,54 @@
+name: Something looks wrong
+description: Text cut off, overlapping, wrong colours, a highlight missing, hard to read, odd layout.
+labels: [bug, ui]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A screenshot says the most here. Please blur anything private: this page is public.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which screen?
+      options:
+        - Start screen
+        - "Journal: writing"
+        - "Journal: Activity"
+        - "Journal: Lock & security"
+        - "Notes: the list on the left"
+        - "Notes: the note"
+        - "Notes: Markdown preview"
+        - "Notes: enhanced copy or topic reference"
+        - "Notes: ☁ Drive menu"
+        - Somewhere else
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshot
+      description: Drag and drop it here.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What looks wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: How should it look?
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Filled in by the app; otherwise run `journal --version`.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Filled in by the app (distribution, kernel, GTK).

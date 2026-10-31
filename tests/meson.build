@@ -15,6 +15,9 @@ foreach name : ['jdate', 'active_time', 'shade', 'lockout', 'db', 'vault', 'jour
 endforeach
 
 # Notes core. Runs under Valgrind with the Journal's core.
+exe = executable('test_report', 'test_report.c', dependencies : report_dep)
+test('report', isolated, args : [exe], env : test_env, suite : 'core')
+
 foreach name : ['noteline', 'notesdb', 'noteexport', 'markdown', 'svgsafe', 'studyclock', 'notebackup', 'notes_crash']
   exe = executable('test_' + name, 'test_' + name + '.c', dependencies : notes_core_dep)
   test(name, isolated, args : [exe], env : test_env, suite : 'core')
