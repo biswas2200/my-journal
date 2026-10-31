@@ -78,6 +78,15 @@ collect_copy (gint64 id, gint64 started, gint64 ended, const char *markdown, gpo
   g_string_append_printf (s, "%" G_GINT64_FORMAT "@%" G_GINT64_FORMAT ":%s", id, started, markdown);
 }
 
+static void
+collect_id (gint64 id, gpointer user)
+{
+  GString *s = user;
+  if (s->len > 0)
+    g_string_append_c (s, ',');
+  g_string_append_printf (s, "%" G_GINT64_FORMAT, id);
+}
+
 static gint64
 num (const char *s)
 {
@@ -182,6 +191,37 @@ run_op (Store *st, char **a, int n)
     return yes (jn_db_add_study (st->db, num (a[1]), num (a[3]), num (a[2])));
   if (strcmp (op, "studied") == 0 && n == 3)
     return g_strdup_printf ("%" G_GINT64_FORMAT, jn_db_studied (st->db, num (a[1]), num (a[2])));
+  if (strcmp (op, "ver") == 0 && n == 2)
+    return g_strdup_printf ("%" G_GINT64_FORMAT, jn_db_topic_version (st->db, num (a[1])));
+  if (strcmp (op, "dset") == 0 && n == 6)
+    return yes (jn_db_drive_set (st->db, num (a[1]), a[2], a[3], num (a[4]), num (a[5])));
+  if (strcmp (op, "dget") == 0 && n == 2)
+    {
+      JnDriveState d = { 0 };
+      if (!jn_db_drive_get (st->db, num (a[1]), &d))
+        return g_strdup ("null");
+      char *r = g_strdup_printf ("%s:%s:v%" G_GINT64_FORMAT "@%" G_GINT64_FORMAT, d.doc, d.link, d.version, d.synced);
+      jn_drive_state_clear (&d);
+      return r;
+    }
+  if (strcmp (op, "mark") == 0 && n == 2)
+    {
+      static const char *names[] = { "never", "done", "changed" };
+      return g_strdup (names[jn_db_drive_mark (st->db, num (a[1]))]);
+    }
+  if (strcmp (op, "fset") == 0 && n == 3)
+    return yes (jn_db_set_drive_folder (st->db, num (a[1]), a[2]));
+  if (strcmp (op, "fget") == 0 && n == 2)
+    {
+      char *f = jn_db_drive_folder (st->db, num (a[1]));
+      return f != NULL ? f : g_strdup ("null");
+    }
+  if (strcmp (op, "due") == 0 && n == 1)
+    {
+      GString *s = g_string_new (NULL);
+      jn_db_foreach_drive_due (st->db, collect_id, s);
+      return g_string_free (s, FALSE);
+    }
   if (strcmp (op, "reopen") == 0 && n == 1)
     {
       jn_db_close (st->db);
@@ -331,6 +371,32 @@ static const ScriptCase scripts[] = {
   { "and with its subject", "subj A -> 1; topic 1 T -> 1; study 1 60 @1 -> true; delsubj 1 -> true; studied 1 @0 -> 0" },
   { "study time survives a restart", "subj A -> 1; topic 1 T -> 1; study 1 60 @1 -> true; reopen -> ok;"
                             "studied 1 @0 -> 60" },
+  { "a new topic has changed nothing yet", "subj A -> 1; topic 1 T -> 1; ver 1 -> 0; ver 9 -> 0" },
+  { "every change counts", "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; ver 1 -> 1; save 1 x '' @2 -> true;"
+                            "ver 1 -> 2; save 1 x 'https://a' @3 -> true; ver 1 -> 3; study 1 60 @4 -> true; ver 1 -> 4;"
+                            "rentopic 1 U -> true; ver 1 -> 5; start 1 @5 -> 2; delsession 2 -> true; ver 1 -> 7" },
+  { "renaming a subject changes all its topics", "subj A -> 1; topic 1 T -> 1; topic 1 U -> 2; subj B -> 2;"
+                            "topic 2 V -> 3; rensubj 1 Z -> true; ver 1 -> 1; ver 2 -> 1; ver 3 -> 0" },
+  { "changes stay per topic", "subj A -> 1; topic 1 T -> 1; topic 1 U -> 2; start 1 @1 -> 1; ver 1 -> 1; ver 2 -> 0" },
+  { "deleting a topic or subject with changes", "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; deltopic 1 -> true;"
+                            "ver 1 -> 0; subj B -> 2; topic 2 U -> 2; start 2 @1 -> 2; delsubj 2 -> true; ver 2 -> 0" },
+  { "never backed up",      "subj A -> 1; topic 1 T -> 1; mark 1 -> never; dget 1 -> null; due -> 1" },
+  { "backed up, then changed", "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; ver 1 -> 1;"
+                            "dset 1 doc1 https://d/1 1 @100 -> true; mark 1 -> done; due -> ;"
+                            "dget 1 -> doc1:https://d/1:v1@100; save 1 x '' @2 -> true; mark 1 -> changed; due -> 1" },
+  { "a change during the backup stays due", "subj A -> 1; topic 1 T -> 1; start 1 @1 -> 1; save 1 x '' @2 -> true;"
+                            "save 1 y '' @3 -> true; dset 1 doc1 l 2 @100 -> true; mark 1 -> changed" },
+  { "backing up again replaces the record", "subj A -> 1; topic 1 T -> 1; dset 1 a l1 0 @1 -> true;"
+                            "dset 1 b l2 0 @2 -> true; dget 1 -> b:l2:v0@2" },
+  { "due: never or changed, by subject then topic", "subj B -> 1; subj A -> 2; topic 1 Y -> 1; topic 1 X -> 2;"
+                            "topic 2 Z -> 3; dset 2 d l 0 @1 -> true; due -> 3,1" },
+  { "the record goes with its topic", "subj A -> 1; topic 1 T -> 1; dset 1 d l 0 @1 -> true; deltopic 1 -> true;"
+                            "dget 1 -> null; dset 1 d l 0 @1 -> false" },
+  { "subject folders", "subj A -> 1; subj B -> 2; fget 1 -> null; fset 1 f1 -> true; fset 2 f2 -> true;"
+                            "fset 1 f3 -> true; fget 1 -> f3; fget 2 -> f2; delsubj 1 -> true; fget 1 -> null;"
+                            "fset 9 x -> false" },
+  { "backup records survive a restart", "subj A -> 1; topic 1 T -> 1; fset 1 f -> true; dset 1 d l 0 @5 -> true;"
+                            "reopen -> ok; fget 1 -> f; dget 1 -> d:l:v0@5" },
   { "quotes and unicode",   "subj \"it's\" -> 1; subj 'टिप्पणी' -> 2; subjects -> it's,टिप्पणी" },
   { "case folding beyond ASCII", "subj 'Ärzte' -> 1; subj 'ärzte' -> 0; subj 'ÉCOLE' -> 2; subj 'école' -> 0" },
 };

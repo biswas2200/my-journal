@@ -386,13 +386,6 @@ jn_window_add_topic (JnWindow *win, const char *name)
 
 /* ---- export ---------------------------------------------------------------- */
 
-static void
-collect_ids (gint64 id, gint64 started, gint64 ended, gpointer user)
-{
-  (void) started; (void) ended;
-  g_array_prepend_val ((GArray *) user, id); /* newest first in, oldest first out */
-}
-
 char *
 jn_window_export (JnWindow *win, GError **error)
 {
@@ -423,19 +416,7 @@ jn_window_export (JnWindow *win, GError **error)
         g_clear_pointer (&path, g_free);
       return path;
     }
-  JnExport *e = jn_export_new (sn, tn);
-  jn_export_set_studied (e, jn_db_studied (win->db, win->topic, 0));
-  GArray *ids = g_array_new (FALSE, FALSE, sizeof (gint64));
-  jn_db_foreach_session (win->db, win->topic, collect_ids, ids);
-  for (guint i = 0; i < ids->len; i++)
-    {
-      JnSession s = { 0 };
-      if (jn_db_get_session (win->db, g_array_index (ids, gint64, i), &s))
-        jn_export_add_session (e, s.started, s.ended, s.sources, s.body);
-      jn_session_clear (&s);
-    }
-  g_array_unref (ids);
-  g_autofree char *md = jn_export_finish (e);
+  g_autofree char *md = jn_export_topic (win->db, win->topic);
 
   g_autofree char *folder_file = jn_export_file_name (sn);
   folder_file[strlen (folder_file) - 3] = '\0'; /* the subject's folder: same rules, no ".md" */

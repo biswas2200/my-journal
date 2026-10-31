@@ -16,6 +16,9 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # The load test's limits are for a laptop; CI machines (and the
+      # coverage build) are slower.
+      JN_LOAD_SLACK: 4
     steps:
       - uses: actions/checkout@v7
         with:
@@ -42,9 +45,6 @@ jobs:
         run: >
           JR_TEST_WRAPPER='valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=1 -q'
           meson test -C build --suite core --timeout-multiplier 4 --print-errorlogs
-
-      - name: Load test (10 000 topics, 100 000 sessions; limits x4 for CI machines)
-        run: JN_LOAD_SLACK=4 meson test -C build --suite load --print-errorlogs
 
       - name: Static analyzer (GCC -fanalyzer)
         run: tools/analyze.sh

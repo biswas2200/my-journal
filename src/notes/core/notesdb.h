@@ -80,7 +80,45 @@ gboolean jn_db_add_study        (JnDb *db, gint64 topic, gint64 at, gint64 secon
 /* Seconds logged on the topic at or after `since` (0: all of it). */
 gint64   jn_db_studied          (JnDb *db, gint64 topic, gint64 since);
 
-/* Small settings (e.g. "ai_consent"). */
+/* ---- the Google Drive backup ------------------------------------------- */
+
+/* Every change to a topic (a session added, edited or removed, study
+ * time logged, the topic or its subject renamed) adds 1 to its version;
+ * the store does it itself (triggers), so nothing can forget to. 0 for a
+ * topic never changed (or missing). A backup records the version it
+ * sent, so "changed since" is one comparison, whatever the clock does. */
+gint64   jn_db_topic_version    (JnDb *db, gint64 topic);
+
+typedef struct {
+  char  *doc, *link; /* the topic's Doc on Drive, and its address */
+  gint64 version;    /* the topic's version that was backed up */
+  gint64 synced;     /* when (Unix seconds) */
+} JnDriveState;
+
+/* FALSE if the topic was never backed up. */
+gboolean jn_db_drive_get        (JnDb *db, gint64 topic, JnDriveState *out);
+void     jn_drive_state_clear   (JnDriveState *s);
+/* After a verified backup; FALSE for a missing topic. */
+gboolean jn_db_drive_set        (JnDb *db, gint64 topic, const char *doc, const char *link, gint64 version,
+                                 gint64 synced);
+
+typedef enum {
+  JN_DRIVE_NEVER,   /* never backed up */
+  JN_DRIVE_DONE,    /* backed up, nothing changed since */
+  JN_DRIVE_CHANGED, /* changed since its last backup */
+} JnDriveMark;
+JnDriveMark jn_db_drive_mark    (JnDb *db, gint64 topic);
+
+typedef void (*JnIdFunc) (gint64 id, gpointer user);
+/* Topics never backed up or changed since: by subject, then topic name. */
+void     jn_db_foreach_drive_due (JnDb *db, JnIdFunc fn, gpointer user);
+
+/* A subject's folder on Drive (NULL if none yet); it goes with the
+ * subject. FALSE for a missing subject. */
+char    *jn_db_drive_folder     (JnDb *db, gint64 subject);
+gboolean jn_db_set_drive_folder (JnDb *db, gint64 subject, const char *folder);
+
+/* Small settings (e.g. "ai_consent", "drive_root"). */
 gboolean jn_db_set_setting      (JnDb *db, const char *key, const char *value);
 char    *jn_db_get_setting      (JnDb *db, const char *key);
 

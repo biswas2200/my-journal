@@ -50,6 +50,41 @@ static const char SCHEMA[] =
   "  at INTEGER NOT NULL,"
   "  seconds INTEGER NOT NULL CHECK (seconds > 0));"
   "CREATE INDEX IF NOT EXISTS study_by_topic ON study_log (topic, at);"
+  /* The Drive backup. A topic's version counts its changes; the triggers
+   * below keep it, so no code path can forget (notesdb.h). Added in
+   * place, like study_log: still version 1, and 0.1.0 opens it. */
+  "CREATE TABLE IF NOT EXISTS topic_changes ("
+  "  topic INTEGER PRIMARY KEY REFERENCES topics(id) ON DELETE CASCADE,"
+  "  version INTEGER NOT NULL);"
+  "CREATE TRIGGER IF NOT EXISTS changed_by_new_session AFTER INSERT ON sessions BEGIN"
+  "  INSERT INTO topic_changes (topic, version) VALUES (NEW.topic, 1)"
+  "    ON CONFLICT (topic) DO UPDATE SET version = version + 1; END;"
+  "CREATE TRIGGER IF NOT EXISTS changed_by_edit AFTER UPDATE OF body, sources ON sessions BEGIN"
+  "  INSERT INTO topic_changes (topic, version) VALUES (NEW.topic, 1)"
+  "    ON CONFLICT (topic) DO UPDATE SET version = version + 1; END;"
+  /* Not when the topic itself is going (its sessions go with it). */
+  "CREATE TRIGGER IF NOT EXISTS changed_by_removed_session AFTER DELETE ON sessions BEGIN"
+  "  INSERT INTO topic_changes (topic, version) SELECT OLD.topic, 1"
+  "    WHERE EXISTS (SELECT 1 FROM topics WHERE id = OLD.topic)"
+  "    ON CONFLICT (topic) DO UPDATE SET version = version + 1; END;"
+  "CREATE TRIGGER IF NOT EXISTS changed_by_study AFTER INSERT ON study_log BEGIN"
+  "  INSERT INTO topic_changes (topic, version) VALUES (NEW.topic, 1)"
+  "    ON CONFLICT (topic) DO UPDATE SET version = version + 1; END;"
+  "CREATE TRIGGER IF NOT EXISTS changed_by_topic_name AFTER UPDATE OF name ON topics BEGIN"
+  "  INSERT INTO topic_changes (topic, version) VALUES (NEW.id, 1)"
+  "    ON CONFLICT (topic) DO UPDATE SET version = version + 1; END;"
+  "CREATE TRIGGER IF NOT EXISTS changed_by_subject_name AFTER UPDATE OF name ON subjects BEGIN"
+  "  INSERT INTO topic_changes (topic, version) SELECT id, 1 FROM topics WHERE subject = NEW.id"
+  "    ON CONFLICT (topic) DO UPDATE SET version = version + 1; END;"
+  "CREATE TABLE IF NOT EXISTS drive_docs ("
+  "  topic INTEGER PRIMARY KEY REFERENCES topics(id) ON DELETE CASCADE,"
+  "  doc TEXT NOT NULL,"
+  "  link TEXT NOT NULL DEFAULT '',"
+  "  version INTEGER NOT NULL,"
+  "  synced INTEGER NOT NULL);"
+  "CREATE TABLE IF NOT EXISTS drive_folders ("
+  "  subject INTEGER PRIMARY KEY REFERENCES subjects(id) ON DELETE CASCADE,"
+  "  folder TEXT NOT NULL);"
   "CREATE TABLE IF NOT EXISTS settings ("
   "  key TEXT PRIMARY KEY,"
   "  value TEXT NOT NULL);"
@@ -615,4 +650,101 @@ void
 jn_db_set_read_only (JnDb *db, gboolean read_only)
 {
   sqlite3_exec (db->h, read_only ? "PRAGMA query_only = ON;" : "PRAGMA query_only = OFF;", NULL, NULL, NULL);
+}
+
+/* ---- the Google Drive backup ------------------------------------------- */
+
+gint64
+jn_db_topic_version (JnDb *db, gint64 topic)
+{
+  sqlite3_stmt *s = prepare (db, "SELECT version FROM topic_changes WHERE topic = ?");
+  bind_int (s, 1, topic);
+  gint64 v = s != NULL && sqlite3_step (s) == SQLITE_ROW ? sqlite3_column_int64 (s, 0) : 0;
+  sqlite3_finalize (s);
+  return v;
+}
+
+gboolean
+jn_db_drive_get (JnDb *db, gint64 topic, JnDriveState *out)
+{
+  *out = (JnDriveState){ 0 };
+  sqlite3_stmt *s = prepare (db, "SELECT doc, link, version, synced FROM drive_docs WHERE topic = ?");
+  bind_int (s, 1, topic);
+  gboolean found = s != NULL && sqlite3_step (s) == SQLITE_ROW;
+  if (found)
+    {
+      out->doc = g_strdup ((const char *) sqlite3_column_text (s, 0));
+      out->link = g_strdup ((const char *) sqlite3_column_text (s, 1));
+      out->version = sqlite3_column_int64 (s, 2);
+      out->synced = sqlite3_column_int64 (s, 3);
+    }
+  sqlite3_finalize (s);
+  return found;
+}
+
+void
+jn_drive_state_clear (JnDriveState *s)
+{
+  g_clear_pointer (&s->doc, g_free);
+  g_clear_pointer (&s->link, g_free);
+  s->version = s->synced = 0;
+}
+
+gboolean
+jn_db_drive_set (JnDb *db, gint64 topic, const char *doc, const char *link, gint64 version, gint64 synced)
+{
+  sqlite3_stmt *s = prepare (db, "INSERT INTO drive_docs (topic, doc, link, version, synced) VALUES (?, ?, ?, ?, ?)"
+                                 " ON CONFLICT (topic) DO UPDATE SET doc = excluded.doc, link = excluded.link,"
+                                 " version = excluded.version, synced = excluded.synced");
+  bind_int (s, 1, topic);
+  bind_text (s, 2, doc);
+  bind_text (s, 3, link);
+  bind_int (s, 4, version);
+  bind_int (s, 5, synced);
+  return done (db, s);
+}
+
+JnDriveMark
+jn_db_drive_mark (JnDb *db, gint64 topic)
+{
+  sqlite3_stmt *s = prepare (db, "SELECT d.version, coalesce (c.version, 0) FROM drive_docs d"
+                                 " LEFT JOIN topic_changes c ON c.topic = d.topic WHERE d.topic = ?");
+  bind_int (s, 1, topic);
+  JnDriveMark mark = JN_DRIVE_NEVER;
+  if (s != NULL && sqlite3_step (s) == SQLITE_ROW)
+    mark = sqlite3_column_int64 (s, 1) > sqlite3_column_int64 (s, 0) ? JN_DRIVE_CHANGED : JN_DRIVE_DONE;
+  sqlite3_finalize (s);
+  return mark;
+}
+
+void
+jn_db_foreach_drive_due (JnDb *db, JnIdFunc fn, gpointer user)
+{
+  sqlite3_stmt *s = prepare (db, "SELECT t.id FROM topics t JOIN subjects j ON j.id = t.subject"
+                                 " LEFT JOIN drive_docs d ON d.topic = t.id LEFT JOIN topic_changes c ON c.topic = t.id"
+                                 " WHERE d.topic IS NULL OR coalesce (c.version, 0) > d.version"
+                                 " ORDER BY j.key, t.key");
+  while (s != NULL && sqlite3_step (s) == SQLITE_ROW)
+    fn (sqlite3_column_int64 (s, 0), user);
+  sqlite3_finalize (s);
+}
+
+char *
+jn_db_drive_folder (JnDb *db, gint64 subject)
+{
+  sqlite3_stmt *s = prepare (db, "SELECT folder FROM drive_folders WHERE subject = ?");
+  bind_int (s, 1, subject);
+  char *f = s != NULL && sqlite3_step (s) == SQLITE_ROW ? g_strdup ((const char *) sqlite3_column_text (s, 0)) : NULL;
+  sqlite3_finalize (s);
+  return f;
+}
+
+gboolean
+jn_db_set_drive_folder (JnDb *db, gint64 subject, const char *folder)
+{
+  sqlite3_stmt *s = prepare (db, "INSERT INTO drive_folders (subject, folder) VALUES (?, ?)"
+                                 " ON CONFLICT (subject) DO UPDATE SET folder = excluded.folder");
+  bind_int (s, 1, subject);
+  bind_text (s, 2, folder);
+  return done (db, s);
 }

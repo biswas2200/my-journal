@@ -1,5 +1,6 @@
 /* noteexport: see noteexport.h. */
 #include "noteexport.h"
+#include "notesdb.h"
 
 #include <string.h>
 #include "noteline.h"
@@ -204,4 +205,33 @@ jn_export_finish (JnExport *e)
   char *md = g_string_free (e->md, FALSE);
   g_free (e);
   return md;
+}
+
+static void
+prepend_id (gint64 id, gint64 started, gint64 ended, gpointer user)
+{
+  (void) started; (void) ended;
+  g_array_prepend_val ((GArray *) user, id); /* newest first in, oldest first out */
+}
+
+char *
+jn_export_topic (JnDb *db, gint64 topic)
+{
+  gint64 subject = 0;
+  g_autofree char *sn = NULL, *tn = NULL;
+  if (!jn_db_get_topic (db, topic, &subject, &sn, &tn))
+    return NULL;
+  JnExport *e = jn_export_new (sn, tn);
+  jn_export_set_studied (e, jn_db_studied (db, topic, 0));
+  GArray *ids = g_array_new (FALSE, FALSE, sizeof (gint64));
+  jn_db_foreach_session (db, topic, prepend_id, ids);
+  for (guint i = 0; i < ids->len; i++)
+    {
+      JnSession s = { 0 };
+      if (jn_db_get_session (db, g_array_index (ids, gint64, i), &s))
+        jn_export_add_session (e, s.started, s.ended, s.sources, s.body);
+      jn_session_clear (&s);
+    }
+  g_array_unref (ids);
+  return jn_export_finish (e);
 }

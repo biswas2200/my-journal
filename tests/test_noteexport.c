@@ -11,6 +11,7 @@
 #include <glib.h>
 #include "cases.h"
 #include "noteexport.h"
+#include "notesdb.h"
 
 /* 2026-10-28 14:05:00 in UTC+5:30 */
 #define T1405 G_GINT64_CONSTANT (1793176500)
@@ -177,6 +178,31 @@ test_reference (void)
   g_assert_cmpstr (empty, ==, "# Empty (reference)\n\nDSA \xc2\xb7 no enhanced copies yet\n");
 }
 
+/* A topic straight from the store: the same text as building it by hand
+ * (what Export .md writes and the Drive backup sends). */
+static void
+test_from_store (void)
+{
+  JnDb *db = jn_db_open (":memory:", NULL);
+  gint64 dsa = jn_db_add_subject (db, "DSA");
+  gint64 topic = jn_db_add_topic (db, dsa, "Prefix sum");
+  gint64 later = jn_db_start_session (db, topic, 1793600000);
+  gint64 first = jn_db_start_session (db, topic, 1793500000);
+  jn_db_save_session (db, first, "# Idea\n- pre[0] = 0", "https://a.example", 1793501500); /* within 30 min */
+  jn_db_save_session (db, later, "- more", "", 1793601800);
+  jn_db_add_study (db, topic, 1793500100, 1500);
+
+  JnExport *e = jn_export_new ("DSA", "Prefix sum");
+  jn_export_set_studied (e, 1500);
+  jn_export_add_session (e, 1793500000, 1793501500, "https://a.example", "# Idea\n- pre[0] = 0");
+  jn_export_add_session (e, 1793600000, 1793601800, "", "- more");
+  g_autofree char *want = jn_export_finish (e);
+  g_autofree char *got = jn_export_topic (db, topic);
+  g_assert_cmpstr (got, ==, want);
+  g_assert_null (jn_export_topic (db, 999));
+  jn_db_close (db);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -187,5 +213,6 @@ main (int argc, char **argv)
   g_test_add_func ("/noteexport/file-name", test_file_name);
   g_test_add_func ("/noteexport/topic", test_topic);
   g_test_add_func ("/noteexport/reference", test_reference);
+  g_test_add_func ("/noteexport/from-store", test_from_store);
   return g_test_run ();
 }

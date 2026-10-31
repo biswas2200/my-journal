@@ -47,3 +47,9 @@ JnExport *jn_export_reference_new (const char *subject, const char *topic);
 void      jn_export_reference_add (JnExport *e, gint64 started, gint64 ended, const char *enhanced);
 /* The Markdown text; frees `e`. */
 char     *jn_export_finish      (JnExport *e);
+
+typedef struct JnDb JnDb;
+/* A whole topic from the store, as Export .md writes it (and as the
+ * Drive backup sends it): every session oldest first, with the time
+ * studied. NULL for a missing topic. */
+char     *jn_export_topic       (JnDb *db, gint64 topic);
