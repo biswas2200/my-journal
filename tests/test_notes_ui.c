@@ -1227,7 +1227,11 @@ click_row (JnWindow *win, const char *text)
 static void
 colour_in (JnWindow *win, GtkWidget *w, guchar rgba[4])
 {
-  pump (100); /* laid out and drawn after the last change */
+  /* Laid out and drawn after the last change: up to 2 s on a slow
+   * (sanitizer) build. */
+  for (int tries = 0; tries < 100 && gtk_widget_get_width (w) <= 6; tries++)
+    pump (20);
+  pump (50);
   int width = gtk_widget_get_width (w), height = gtk_widget_get_height (w);
   g_assert_cmpint (width, >, 6);
   g_assert_cmpint (height, >, 0);
