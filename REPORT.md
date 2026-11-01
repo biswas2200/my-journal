@@ -1,7 +1,7 @@
 # Journal and Notes: test and safety report
 
-30 October 2026, tested at commit 755ef34. What protects your writing, how it was
-tested, what testing found, and what only you can check.
+1 November 2026, release 0.1.6. What protects your writing, how it was
+tested, what testing found since 0.1.0, and what only you can check.
 
 ## What protects what
 
@@ -24,36 +24,66 @@ tested, what testing found, and what only you can check.
 **Notes** is for study notes: plain files (0600), network and AI allowed.
 
 - Landlock keeps it from opening the Journal's folder or the login
-  keyring, for Notes and anything it starts.
-- **The AI helper** (`journal-ai`) does all network work, one run per
-  Enhance:
-  - It locks itself first: it can't read or write any of your files,
-    can reach only ports 443 and 80, and refuses to run without the lock.
-  - It gets the note, its links and a one-hour token. Your Google
-    refresh token stays in Notes.
-  - Links and redirects into this laptop or your home network are refused.
+  keyring's files, for Notes and anything it starts. So links and
+  Google's sign-in page open through the desktop's portal: a browser
+  started by Notes would be locked too.
+- Every save is one transaction; a failed save leaves a rescue copy in
+  `~/Documents/Notes/Unsaved/` and keeps retrying; 14 daily backups;
+  a damaged file is never opened or backed up over a good one.
+- **The AI helper** (`journal-ai`) does the network work of an Enhance:
+  no files, ports 443 and 80 only, never this laptop or your home
+  network; it sees a one-hour token, never your sign-in.
+- **The Drive helper** (`journal-drive`) does the network work of a
+  backup: no files, port 443 only, a one-hour token. Notes asks Google
+  only for `drive.file` (the files it made itself, never the rest of
+  your Drive); the sign-in is kept in your login keyring. A backup
+  counts only once the Doc reads back with the same text, and a Doc
+  anyone else can open is pointed out.
 - What the AI writes is only shown, never run. Its diagrams pass an
   allow-list cleaner first, and only http(s) links open.
+- **⚑ Report** only opens a GitHub form in your browser, with the
+  version and system filled in; nothing is sent from the app.
 
 **What no app can stop:** a program already running as you (malware, a
-stolen login) can wait for you to unlock. Full-disk encryption and a
-strong login password cover that.
+stolen login) can wait for you to unlock, or ask the keyring service
+for Notes' Google sign-in. Full-disk encryption, a strong login password
+and 2-Step Verification on your Google account cover that.
 
 ## How it was tested
 
 | Check | Result |
 | --- | --- |
-| Unit, UI and integration tests (LeetCode style: tables of cases plus random "hidden" cases) | 41 suites, all pass |
-| AddressSanitizer + UBSan (core, sandbox, UI) | clean |
-| Valgrind (core, fuzz replays) | 0 errors, 0 leaks |
-| GCC static analyzer | 0 findings |
-| Fuzzing, 10 targets (5 Journal, 5 Notes), libFuzzer + ASan + UBSan | 9 bugs found, all fixed; every input kept and replayed on each test run |
-| SonarQube Cloud quality gate | passed: 0 open issues, 91.9% coverage on new code, A ratings for reliability, security and maintainability |
-| GitHub CI (build, tests, sanitizers, 10 fuzz jobs) | all 12 jobs pass |
-| Crash safety: writer killed at random 50 times per run | every saved entry survives |
-| Network jail and AppArmor, probed from outside | everything refused |
+| Unit, UI and integration tests (LeetCode style: tables of cases plus random "hidden" cases) | 51 suites, all pass |
+| AddressSanitizer + UBSan | clean (core, sandbox); the UI suite's exit leaks are GTK's own (none from this code) |
+| Valgrind (core tests and fuzz replays) | 0 errors, 0 leaks |
+| GCC static analyzer (GCC 15 here, GCC 13 on GitHub) | 0 findings |
+| Fuzzing, 11 targets, libFuzzer + ASan + UBSan | every input that ever found a bug kept and replayed on each run |
+| Crash safety: writer killed with SIGKILL at random moments | Journal 50 times, Notes 25 times while saving and backing up: nothing reported saved is ever lost |
+| Memory growth: the Journal's screens and lock cycles, 30 tours of everything in Notes | no growth |
+| Load: 10 000 topics, 100 000 sessions, 1 MB notes | open a topic 5-20 ms, longest typing freeze under 15 ms |
+| Sanity: each release installed beside the one before, old notes opened in the new and back | 0.1.1 to 0.1.6: every check passes |
+| Live check with Google (1 Nov 2026, test notes) | sign-in through the portal and keyring, three Docs made, updated in place, private, nothing made twice, backup on close |
+| SonarQube Cloud quality gate | passed: 0 open issues, A ratings |
+| GitHub CI (build, tests, sanitizers, sanity, 11 fuzz jobs) | all 14 jobs pass |
 
-## What fuzzing found (step 6)
+## What testing found since 0.1.0
+
+| Found by | What | Could it hurt you? | Fixed in |
+| --- | --- | --- | --- |
+| The new highlight test | A style rule hid the sidebar's highlight | No; you could not see what was selected | 0.1.2 |
+| The crash test | A backup cut off by a crash left SQLite's side file, which the next backup could pick up | A stale backup copy | 0.1.3 |
+| The load test | With years of notes the sidebar took 454 ms to rebuild, and typing froze 280 ms at each autosave | Typing stutter | 0.1.4 |
+| A review of the Drive backup | A backup cut short at closing lost track of the Docs it had made (the next one made them again), and its helper kept running | Duplicate Docs | before 0.1.5 |
+| A review of the sign-in | The browser for Google's page was started inside Notes' lock; a silent connection froze Notes 5 s; a second sign-in left the first running (a false error 5 minutes later); closing mid-sign-in used freed memory; no browser meant a 5-minute wait | A locked-up browser, a freeze, a possible crash at closing | before 0.1.5 |
+| The same review | An Enhance (or a sign-in) still out kept the window alive past the end, so the closing backup could be skipped | One day's closing backup missing | 0.1.5 |
+| The live check with Google | A line right after a bullet was joined onto it in the Doc (and in Export .md); `<tags>` in a note was dropped; Google's escaped Markdown failed the read-back | Lines merged, a word lost in the copy (your notes were never touched) | 0.1.5 |
+| The Report menu | All three programs asked GTK for its light style (3 is LIGHT, 2 is DARK) | Light menus and dialogs, nearly invisible window buttons | 0.1.6 |
+| GitHub's older compiler | Two analyzer complaints about correct code | No | 0.1.6 |
+
+Each has a test that fails on the old code and passes on the new one;
+Google's real answers from the live check are kept in `tests/data`.
+
+### Earlier: what fuzzing found (0.1.0)
 
 New fuzz targets cover everything in Notes that reads outside input:
 
@@ -101,8 +131,14 @@ These need your laptop, your accounts or sudo. The steps are in
 
 - **Install** (not done yet; the laptop still runs the 11 Oct build):
   `sudo meson install -C build --no-rebuild && sudo tools/install-apparmor.sh && tools/check-apparmor.sh`.
-  Until then, the AppArmor layer isn't active.
-- Lid close while writing (#1), and the PIN on a new keyring (#11).
-- A real enhanced copy with and without sources (#13).
-- The study timer's desktop notification, and that time asleep isn't
-  counted (#15).
+  Until then, the AppArmor layer isn't active and Notes has no Drive
+  backup or Report button.
+- **Google**: the app is in "Testing", so Google ends the sign-in after
+  7 days (Notes then asks you to sign in again). Publishing it needs a
+  homepage and a privacy policy page.
+- A Doc's earlier versions (File, Version history) after a backup
+  (#16, step 4), and the report forms (#17).
+- Lid close while writing (#1), the PIN on a new keyring (#11), a real
+  enhanced copy (#13), the study timer's notification and sleep (#15).
+- When you are done with them, delete the "Live check (delete me)"
+  folder in My Drive / Notes.

@@ -1,18 +1,17 @@
 # Changes
 
-## Unreleased
+## 0.1.6 (1 November 2026)
 
-### Notes: your text survives anything
+Report a problem from the app; the dark style, made whole.
 
-- A save that fails (a full disk, a broken file) is never silent: the
-  note goes at once to `~/Documents/Notes/Unsaved/`, the status line
-  turns red and says where, and Notes keeps trying. If even that copy
-  cannot be written, Notes will not close until the text is saved.
-- Daily backups of `notes.db` (the last 14 days) in
-  `~/.local/share/journal-notes/backups/`, made when Notes opens and
-  when it closes, each checked before it replaces anything.
-- A damaged notes file is never opened or backed up over a good copy;
-  Notes names the newest backup to restore.
+### Report a problem
+
+- **⚑ Report** on the start screen and in Notes: *Something is broken*,
+  *Something looks wrong* or *An idea or improvement* opens that form on
+  the project's GitHub page, with the version and the system filled in.
+  Add what happened, the steps and screenshots there; nothing is sent
+  from the app. Journal problems are reported from the start screen
+  (the Journal may not open links).
 
 ### Fixed
 
@@ -20,15 +19,10 @@
   asked GTK for its *light* scheme by mistake, so menus, dialogs and the
   window's own buttons came out light (or nearly invisible) on the dark
   windows.
-- The sidebar now highlights what you clicked (a style rule hid it).
-- A backup cut off by a crash no longer leaves SQLite's side file
-  behind, where the next backup could have picked it up.
-- Google Drive: a backup cut short (Notes closing after its minute) used
-  to lose track of the Docs it had made, and the next one made them
-  again; and the helper kept running after Notes stopped listening.
-  Each topic is now recorded the moment it is done, the helper is
-  stopped with the backup, and before making a folder or Doc the helper
-  looks for one Notes made earlier: nothing is ever made twice.
+
+## 0.1.5 (1 November 2026)
+
+Back up Notes to your own Google Drive.
 
 ### Notes: back up to your own Google Drive
 
@@ -43,48 +37,40 @@
   backup" (amber); topics waiting for a backup are marked in the list.
 - A backup counts only once the Doc reads back with the same text;
   anyone besides you being able to open a Doc is pointed out.
+- A backup cut short (Notes closing after its minute) keeps every topic
+  it finished, and nothing is ever made twice: before making a folder
+  or Doc, Notes looks for one it made earlier.
+- Every line of a note stays its own line in the Doc, and text such as
+  `<tags>` is kept as written (Markdown readers take it for web code).
+  Checked live against Google Docs before this release.
+- The sign-in page opens in your default browser through the desktop's
+  portal, so the browser never runs inside Notes' file lock. Notes
+  waits 5 minutes and the ☁ Drive menu says so; clicking again starts
+  over; with no browser to open, it says so at once.
 - The Drive work runs in a locked-down helper (`journal-drive`) that
   sees only a one-hour token. One-time setup: see README, "Google Drive
   backup".
 
-### Report a problem
+### Fixed
 
-- **⚑ Report** on the start screen and in Notes: *Something is broken*,
-  *Something looks wrong* or *An idea or improvement* opens that form on
-  the project's GitHub page, with the version and the system filled in.
-  Add what happened, the steps and screenshots there; nothing is sent
-  from the app. Journal problems are reported from the start screen
-  (the Journal may not open links).
+- **Export .md**: a plain or arrow line right after a bullet was read as
+  part of the bullet by Markdown readers, "Time studied" joined the
+  subject line, and `<tags>` in a note vanished. Every line now stays
+  its own line and such text is escaped.
+- Closing Notes while an **Enhance** was still out skipped the day's
+  backup at close; it is now made as the window closes.
 
-### Signing in to Google, made sturdier
+### Tests
 
-- The sign-in page and links in notes now open through the desktop's
-  portal. Before, the browser was started by Notes itself and, if it was
-  not already running, would have run inside Notes' file lock.
-- A program connecting to the sign-in address and sending nothing froze
-  Notes for 5 seconds; it no longer holds anything up.
-- Clicking **Sign in** again (the first tab closed or lost) used to leave
-  the first sign-in waiting, and 5 minutes later say it was "not
-  finished" even though you were signed in. The new one now replaces it,
-  and the ☁ Drive menu says when Notes is waiting for you on Google's
-  page.
-- No browser to open: said at once instead of after 5 minutes.
-- Closing Notes while Google's page was open could leave the window
-  object alive to the end; closing during an **Enhance** skipped the
-  day's backup at close. Both fixed: the backup is made as the window
-  closes.
+- A fake Google (Drive and its sign-in service) for the helper, the
+  client and the window; a sign-in that is stopped, replaced or cut off
+  at any moment, and random junk sent to its return address; a fuzz
+  target for everything the backup reads from Google and from its
+  helper (`fuzz/fuzz_drive.c`).
 
-### Found in the live check with Google
+## 0.1.4 (1 November 2026)
 
-- Export .md and the Drive backup now keep every line of a note on its
-  own line in any Markdown reader: a plain or arrow line right after a
-  bullet used to be read as part of the bullet (Google Docs joined
-  them), and "Time studied" joined the subject line.
-- Text that Markdown readers take for web code, like `<tags>`, is now
-  escaped: Google Docs dropped it from the Doc. The backup's read-back
-  check is what caught it, and it now reads Google's way of writing
-  Markdown (escaped links, `*` kept as text) without missing a lost
-  word.
+Notes stays quick with years of notes.
 
 ### Faster with many notes
 
@@ -95,14 +81,48 @@
 
 ### Tests
 
+- A load test (`meson test --suite load`) with years of notes, timed
+  against fixed limits; CI runs it too.
+
+## 0.1.3 (1 November 2026)
+
+Crash, memory and sanity tests for Notes, and a backup fix they found.
+
+### Fixed
+
+- A backup cut off by a crash no longer leaves SQLite's side file
+  behind, where the next backup could have picked it up.
+
+### Tests
+
 - Notes crash test (SIGKILL while saving and backing up), a memory
   no-growth test for the Notes window, and `tools/sanity.sh`: this tree
   and the last release side by side, including old notes in the new
   build and back. CI runs it on every push.
-- A load test (`meson test --suite load`) with years of notes, timed
-  against fixed limits; CI runs it too.
-- A fuzz target for everything the Drive backup reads from Google and
-  from its helper (`fuzz/fuzz_drive.c`).
+
+## 0.1.2 (1 November 2026)
+
+A fix for the Notes sidebar.
+
+### Fixed
+
+- The sidebar now highlights what you clicked (a style rule hid it).
+
+## 0.1.1 (1 November 2026)
+
+Notes keeps your text through any failure.
+
+### Notes: your text survives anything
+
+- A save that fails (a full disk, a broken file) is never silent: the
+  note goes at once to `~/Documents/Notes/Unsaved/`, the status line
+  turns red and says where, and Notes keeps trying. If even that copy
+  cannot be written, Notes will not close until the text is saved.
+- Daily backups of `notes.db` (the last 14 days) in
+  `~/.local/share/journal-notes/backups/`, made when Notes opens and
+  when it closes, each checked before it replaces anything.
+- A damaged notes file is never opened or backed up over a good copy;
+  Notes names the newest backup to restore.
 
 ## 0.1.0 (30 October 2026)
 
