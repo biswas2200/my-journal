@@ -1,6 +1,8 @@
 # Changes
 
-## Unreleased
+## 0.1.1 (1 November 2026)
+
+Notes keeps your text through any failure.
 
 ### Notes: your text survives anything
 
