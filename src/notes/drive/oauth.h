@@ -1,5 +1,5 @@
 /* oauth: "Sign in with Google" for Notes' Drive backup, as pure
- * functions (signin.c does the browser and the network).
+ * functions (driveclient.c does the browser and the network).
  *
  * Google's flow for desktop apps (OAuth 2.0 for installed apps, with
  * PKCE, RFC 7636):

@@ -83,6 +83,16 @@ add a trigger, or the backup will not notice the change.
   given clock), so logic is tested without waiting or sleeping.
 - **The Journal stays offline.** Nothing network-related is ever linked
   into `journal-diary`.
+- **Notes never starts a program to show something.** A child of Notes
+  inherits its Landlock lock, so a browser started from Notes would run
+  locked (and stay so). Open addresses with `jr_open_uri`
+  (`src/shared/openuri.h`): it asks the desktop's portal over D-Bus,
+  and starts the browser directly only when there is no portal.
+- **Closing work happens in `close-request`, not only in `dispose`.**
+  GTK 4 frees a window only when its last reference goes; a callback
+  still out (an Enhance, a sign-in) can hold one past the end of the
+  program. Callbacks the window's own clients make need no reference:
+  the clients are freed in `dispose` and end what they do then.
 
 ## Code style
 
@@ -132,7 +142,7 @@ window on your desktop.
 - build, all tests with coverage, Valgrind and the analyzer;
 - sanitizers;
 - `tools/sanity.sh` against the newest tag;
-- each of the 10 fuzz targets for 2 minutes;
+- each of the 11 fuzz targets for 2 minutes;
 - SonarQube Cloud, whose quality gate must pass with 0 open issues.
 
 CI runs Ubuntu 24.04, which is older than a current laptop: json-glib
@@ -160,6 +170,10 @@ runs with `JN_LOAD_SLACK=4`.
     defaults hide overflow.
   - A rule like `.sidebar list > row` beats `row.current`, so scope
     style rules the same way.
+- A blocking read in a main-loop callback freezes the window for as long
+  as the other side likes. The sign-in's return address once waited 5 s
+  on a connection that said nothing; read it asynchronously, with a
+  time limit.
 - SQLite leaves `….tmp-journal` beside a copy cut off half-way. Remove
   it before the next copy (`remove_partial` in notesdb.c).
 - json-glib 1.8 reads past the first JSON value, leaks memory on bad

@@ -43,6 +43,24 @@
   sees only a one-hour token. One-time setup: see README, "Google Drive
   backup".
 
+### Signing in to Google, made sturdier
+
+- The sign-in page and links in notes now open through the desktop's
+  portal. Before, the browser was started by Notes itself and, if it was
+  not already running, would have run inside Notes' file lock.
+- A program connecting to the sign-in address and sending nothing froze
+  Notes for 5 seconds; it no longer holds anything up.
+- Clicking **Sign in** again (the first tab closed or lost) used to leave
+  the first sign-in waiting, and 5 minutes later say it was "not
+  finished" even though you were signed in. The new one now replaces it,
+  and the ☁ Drive menu says when Notes is waiting for you on Google's
+  page.
+- No browser to open: said at once instead of after 5 minutes.
+- Closing Notes while Google's page was open could leave the window
+  object alive to the end; closing during an **Enhance** skipped the
+  day's backup at close. Both fixed: the backup is made as the window
+  closes.
+
 ### Faster with many notes
 
 - Measured with 10 000 topics and 100 000 sessions. The sidebar now

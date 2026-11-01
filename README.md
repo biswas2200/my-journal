@@ -215,20 +215,25 @@ small "app" in your own Google Cloud project (5 minutes, free):
 1. [Google Cloud Console](https://console.cloud.google.com/), your
    project: **APIs & Services → Library**, turn on the **Google Drive
    API**.
-2. **APIs & Services → OAuth consent screen**: user type **External**,
-   an app name (e.g. "Journal Notes"), your email. Then set its
-   publishing status to **In production**: in "Testing" Google ends the
-   sign-in after 7 days. An app only you use needs no review; Google
-   shows an "unverified app" notice once, which you can pass.
-3. **APIs & Services → Credentials → Create credentials → OAuth client
-   ID**, type **Desktop app**. Download its JSON.
+2. **Google Auth Platform** (formerly "OAuth consent screen"): **Get
+   started**, an app name (e.g. "Journal Notes"), your email, audience
+   **External**. Then under **Audience**, **Publish app** so its status
+   is **In production**: in "Testing" Google ends the sign-in after 7
+   days. An app only you use needs no review (`drive.file` is not a
+   sensitive scope); Google may show an "unverified app" notice once,
+   which you can pass.
+3. **Google Auth Platform → Clients → Create client**, type **Desktop
+   app**. Download its JSON.
 4. Save it as `~/.config/journal-notes/google-client.json`:
 
    ```bash
    mkdir -p ~/.config/journal-notes && mv ~/Downloads/client_secret_*.json ~/.config/journal-notes/google-client.json && chmod 600 ~/.config/journal-notes/google-client.json
    ```
 5. In Notes: **☁ Drive → Sign in with Google**, and allow access on
-   Google's page.
+   Google's page. It opens in your default browser through the
+   desktop's portal, so the browser never runs inside Notes' lock. Notes
+   waits 5 minutes; if you close the tab, **☁ Drive → Open Google's
+   sign-in page again** starts over.
 
 To remove Notes' access completely: **☁ Drive → Sign out** (it revokes
 the sign-in at Google), or at
@@ -559,6 +564,9 @@ How the parts fit, the rules the code keeps, how to test and release:
 
 ```
 src/launcher/ `journal`: the start screen; runs one program at a time
+src/shared/   the start screen's and Notes': report (the GitHub form's
+              address), openuri (opening an address through the
+              desktop's portal)
 src/diary/    `journal-diary`: the Journal's main(), in the network jail
 src/notes/    `journal-notes`: Notes (study notes, AI enhanced copy)
   core/       plain C, no UI, nothing of the Journal: noteline (the six

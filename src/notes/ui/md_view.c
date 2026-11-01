@@ -4,6 +4,7 @@
 #include <string.h>
 #include <librsvg/rsvg.h>
 #include "markdown.h"
+#include "openuri.h"
 #include "svgsafe.h"
 
 #define DIAGRAM_MAX_WIDTH 620
@@ -267,9 +268,9 @@ on_click (GtkGestureClick *g, int n, double x, double y, gpointer data)
   if (url == NULL)
     return;
   gtk_gesture_set_state (GTK_GESTURE (g), GTK_EVENT_SEQUENCE_CLAIMED);
-  GtkUriLauncher *l = gtk_uri_launcher_new (url);
-  gtk_uri_launcher_launch (l, GTK_WINDOW (gtk_widget_get_root (GTK_WIDGET (v))), NULL, NULL, NULL);
-  g_object_unref (l);
+  /* Through the desktop's portal, so the browser does not start inside
+   * Notes' lock (openuri.h). Nothing to say if it fails: the link stays. */
+  jr_open_uri (url, NULL);
 }
 
 /* GTK 4.22's GtkTextView can keep the line wrapping of a width it had a

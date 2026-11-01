@@ -44,9 +44,11 @@ struct _JnWindow {
 
   JnBackup     *drive;          /* Google Drive backup, or NULL */
   GCancellable *drive_cancel;
+  GCancellable *sign_in_cancel; /* the sign-in under way, or NULL */
   gboolean      backing_up;
   gboolean      closing;        /* hidden, backing up before it closes */
   gboolean      closing_backed; /* that backup is over: close for real */
+  gboolean      day_backed;     /* the day's backup was made as it closed */
   guint         close_limit_ms; /* how long closing may wait for it */
   GtkWidget    *drive_button, *drive_line, *sign_in, *backup_topic, *backup_all, *sign_out, *backup_state;
 };
@@ -1005,6 +1007,10 @@ on_close_request (GtkWindow *window)
     }
   if (win->ai_cancel != NULL)
     g_cancellable_cancel (win->ai_cancel);
+  /* The day's backup now, not only when the window is freed: an Enhance
+   * still out keeps the window alive, and Notes may end before it is. */
+  if (win->backup_dir != NULL && win->db != NULL)
+    win->day_backed = jn_backup_now (win->db, win->backup_dir, now (), JN_BACKUP_KEEP, NULL);
   return FALSE;
 }
 
@@ -1144,8 +1150,8 @@ jn_window_dispose (GObject *object)
   JnWindow *win = JN_WINDOW (object);
   if (win->clock != NULL && win->db != NULL)
     jn_clock_bar_flush (win->clock);
-  /* The day's backup, as Notes closes. */
-  if (win->backup_dir != NULL && win->db != NULL)
+  /* The day's backup, unless it was made as the window closed. */
+  if (win->backup_dir != NULL && win->db != NULL && !win->day_backed)
     jn_backup_now (win->db, win->backup_dir, now (), JN_BACKUP_KEEP, NULL);
   g_clear_pointer (&win->backup_dir, g_free);
   g_clear_pointer (&win->rescue_path, g_free);
@@ -1159,6 +1165,10 @@ jn_window_dispose (GObject *object)
   if (win->drive_cancel != NULL)
     g_cancellable_cancel (win->drive_cancel);
   g_clear_object (&win->drive_cancel);
+  /* A sign-in under way ends quietly as the client goes (see on_signed_in). */
+  if (win->sign_in_cancel != NULL)
+    g_cancellable_cancel (win->sign_in_cancel);
+  g_clear_object (&win->sign_in_cancel);
   if (win->drive != NULL)
     win->drive->free (win->drive);
   win->drive = NULL;
@@ -1408,8 +1418,11 @@ update_drive (JnWindow *win)
   if (win->drive_button == NULL)
     return; /* still being built */
   gboolean in = drive_signed_in (win);
+  gboolean signing = win->sign_in_cancel != NULL;
   gtk_widget_set_visible (win->drive_button, win->drive != NULL);
   gtk_widget_set_visible (win->sign_in, !in);
+  gtk_button_set_label (GTK_BUTTON (win->sign_in), signing ? "Open Google\xe2\x80\x99s sign-in page again"
+                                                           : "Sign in with Google");
   gtk_widget_set_visible (win->backup_topic, in);
   gtk_widget_set_visible (win->backup_all, in);
   gtk_widget_set_visible (win->sign_out, in);
@@ -1418,6 +1431,8 @@ update_drive (JnWindow *win)
   gtk_label_set_text (GTK_LABEL (win->drive_line),
                       win->backing_up ? "Backing up to Google Drive\xe2\x80\xa6"
                       : in            ? "Signed in to Google Drive. Notes can see only the files it made."
+                      : signing       ? "Finish signing in on Google\xe2\x80\x99s page in your browser. Notes waits "
+                                        "5 minutes."
                                       : "Back up your notes to your own Google Drive, as Google Docs.");
   g_autofree char *state = backup_state_text (win);
   gtk_label_set_text (GTK_LABEL (win->backup_state), state);
@@ -1640,17 +1655,33 @@ jn_window_backup_state (JnWindow *win)
   return gtk_label_get_text (GTK_LABEL (win->backup_state));
 }
 
+const char *
+jn_window_drive_line (JnWindow *win)
+{
+  return gtk_label_get_text (GTK_LABEL (win->drive_line));
+}
+
+gboolean
+jn_window_is_signing_in (JnWindow *win)
+{
+  return win->sign_in_cancel != NULL;
+}
+
 static void
 on_signed_in (gboolean ok, const char *error, gpointer user)
 {
-  JnWindow *win = user;
+  JnWindow *win = user; /* no reference: the client ends the sign-in as it is freed, in dispose */
+  /* Stopped (a newer sign-in, or the window closing): nothing to say,
+   * and the window may be half gone. */
+  if (!ok && error == NULL)
+    return;
+  g_clear_object (&win->sign_in_cancel);
   if (ok)
     set_status (win, "Signed in to Google Drive. Back up a topic, or everything, from the \xe2\x98\x81 Drive menu.");
   else
     set_alarm (win, error);
   rebuild (win);
   update_drive (win);
-  g_object_unref (win);
 }
 
 void
@@ -1666,8 +1697,15 @@ jn_window_drive_sign_in (JnWindow *win)
       set_alarm (win, msg);
       return;
     }
+  /* Again while one waits (its tab closed or lost): a fresh one replaces
+   * it. */
+  if (win->sign_in_cancel != NULL)
+    g_cancellable_cancel (win->sign_in_cancel);
+  g_clear_object (&win->sign_in_cancel);
+  win->sign_in_cancel = g_cancellable_new ();
   set_status (win, "Opening Google's sign-in page in your browser\xe2\x80\xa6");
-  win->drive->sign_in (win->drive, NULL, on_signed_in, g_object_ref (win));
+  win->drive->sign_in (win->drive, win->sign_in_cancel, on_signed_in, win);
+  update_drive (win); /* "Finish signing in…", unless it already ended */
 }
 
 void
@@ -1690,6 +1728,7 @@ jn_window_set_close_limit (JnWindow *win, guint ms)
 void
 jn_window_set_drive (JnWindow *win, JnBackup *backup)
 {
+  g_clear_object (&win->sign_in_cancel); /* the old client's sign-in ends with it */
   if (win->drive != NULL)
     win->drive->free (win->drive);
   win->drive = backup;

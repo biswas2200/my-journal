@@ -5,8 +5,10 @@
 #include <libsecret/secret.h>
 #include <libsoup/soup.h>
 #include "oauth.h"
+#include "openuri.h"
 
 #define SIGN_IN_TIMEOUT 300 /* seconds to finish on Google's page */
+#define VISIT_TIMEOUT   5   /* seconds for whatever connects to say its piece */
 
 static void
 wipe_free (char **s)
@@ -68,19 +70,24 @@ jn_backup_client_path (void)
 
 /* ---- the client ---------------------------------------------------------------- */
 
+typedef struct SignIn SignIn;
+typedef struct Job Job;
+
 typedef struct {
   JnBackup      base;
   char         *helper, *client_file, *auth_url, *token_url, *revoke_url, *api_base;
   guint16       ports[JN_DRIVE_MAX_PORTS];
   gsize         n_ports;
   JnSecretStore store;
-  void        (*open_uri) (const char *uri, gpointer user);
+  gboolean    (*open_uri) (const char *uri, gpointer user, GError **error);
   gpointer      open_user;
   SoupSession  *session;
   char         *refresh;     /* loaded once from the store */
   gboolean      loaded;
   char         *access;      /* cached access token */
   gint64        access_until; /* monotonic seconds */
+  SignIn       *signing;     /* the sign-in under way, if any */
+  GPtrArray    *jobs;        /* backups under way */
 } Google;
 
 static const char *
@@ -138,47 +145,103 @@ google_signed_in (JnBackup *self)
 
 /* ---- signing in ----------------------------------------------------------------- */
 
-typedef struct {
-  Google         *g;
+/* One sign-in, from opening Google's page to keeping the refresh token.
+ * It ends exactly once (sign_in_finish): signed in, failed, or stopped
+ * (a new sign-in, its cancellable, or the client freed as Notes closes).
+ * A trade of the code still on its way holds a reference, so its answer
+ * finds this alive and, the sign-in being over, drops it. */
+struct SignIn {
+  int             refs;
+  Google         *g;          /* NULL once over */
   JnOAuthClient   client;
   char           *verifier, *state, *redirect;
-  GSocketService *service;
-  GCancellable   *cancel;
+  GSocketService *service;    /* the return address, 127.0.0.1 */
+  GPtrArray      *visits;     /* connections to it still being read */
+  GCancellable   *stop;       /* stops the trade of the code */
+  GSource        *cancelled;  /* watches the caller's cancellable */
   guint           timeout_id;
   JnSignInDone    done;
   gpointer        user;
   gboolean        finished;
-} SignIn;
+};
 
+/* One connection to the return address, read without waiting on it:
+ * whatever connects (the browser, or any program here) may send its
+ * request slowly, or nothing at all. */
+typedef struct {
+  SignIn            *s;       /* NULL once the sign-in is over */
+  GSocketConnection *conn;
+  GCancellable      *cancel;  /* the sign-in ended, or VISIT_TIMEOUT passed */
+  guint              timeout_id;
+  gsize              got;
+  char               buf[8192];
+} Visit;
+
+static void
+sign_in_unref (SignIn *s)
+{
+  if (--s->refs > 0)
+    return;
+  g_ptr_array_unref (s->visits);
+  g_object_unref (s->stop);
+  g_free (s);
+}
+
+static void
+visit_free (Visit *v)
+{
+  g_clear_handle_id (&v->timeout_id, g_source_remove);
+  g_io_stream_close (G_IO_STREAM (v->conn), NULL, NULL);
+  g_object_unref (v->conn);
+  g_object_unref (v->cancel);
+  g_free (v);
+}
+
+/* Ends the sign-in: closes the return address, wipes the secrets, and
+ * tells the caller (ok FALSE with error NULL: stopped, nothing to say). */
 static void
 sign_in_finish (SignIn *s, gboolean ok, const char *error)
 {
   if (s->finished)
     return;
   s->finished = TRUE;
+  if (s->g != NULL && s->g->signing == s)
+    s->g->signing = NULL;
+  s->g = NULL;
   g_clear_handle_id (&s->timeout_id, g_source_remove);
+  if (s->cancelled != NULL)
+    {
+      g_source_destroy (s->cancelled);
+      g_clear_pointer (&s->cancelled, g_source_unref);
+    }
   if (s->service != NULL)
     {
+      g_signal_handlers_disconnect_by_data (s->service, s);
       g_socket_service_stop (s->service);
       g_socket_listener_close (G_SOCKET_LISTENER (s->service));
+      g_clear_object (&s->service);
     }
-  s->done (ok, error, s->user);
+  for (guint i = 0; i < s->visits->len; i++)
+    {
+      Visit *v = g_ptr_array_index (s->visits, i);
+      v->s = NULL; /* its read ends cancelled and frees it */
+      g_cancellable_cancel (v->cancel);
+    }
+  g_ptr_array_set_size (s->visits, 0);
+  g_cancellable_cancel (s->stop);
   jn_oauth_client_clear (&s->client);
   wipe_free (&s->verifier);
-  g_free (s->state);
-  g_free (s->redirect);
-  g_clear_object (&s->service);
-  g_clear_object (&s->cancel);
-  g_free (s);
+  g_clear_pointer (&s->state, g_free);
+  g_clear_pointer (&s->redirect, g_free);
+  s->done (ok, error, s->user);
+  sign_in_unref (s);
 }
 
+/* Google's answer to the code: keep the refresh token, use the access
+ * token. */
 static void
-on_code_traded (GObject *src, GAsyncResult *res, gpointer data)
+keep_tokens (SignIn *s, SoupMessage *msg, GBytes *body, const GError *error)
 {
-  SignIn *s = data;
-  SoupMessage *msg = soup_session_get_async_result_message (SOUP_SESSION (src), res);
-  g_autoptr (GError) error = NULL;
-  g_autoptr (GBytes) body = soup_session_send_and_read_finish (SOUP_SESSION (src), res, &error);
   if (body == NULL)
     {
       g_autofree char *m = g_strdup_printf ("Google's sign-in service could not be reached (%s).", error->message);
@@ -186,11 +249,12 @@ on_code_traded (GObject *src, GAsyncResult *res, gpointer data)
       return;
     }
   gsize len = 0;
-  const char *data_ = g_bytes_get_data (body, &len);
+  const char *data = g_bytes_get_data (body, &len);
   JnOAuthTokens t = { 0 };
-  if (!jn_oauth_parse_tokens (data_, (gssize) len, (int) soup_message_get_status (msg), &t, &error))
+  g_autoptr (GError) parse_error = NULL;
+  if (!jn_oauth_parse_tokens (data, (gssize) len, (int) soup_message_get_status (msg), &t, &parse_error))
     {
-      sign_in_finish (s, FALSE, error->message);
+      sign_in_finish (s, FALSE, parse_error->message);
       return;
     }
   if (t.refresh == NULL)
@@ -217,6 +281,18 @@ on_code_traded (GObject *src, GAsyncResult *res, gpointer data)
 }
 
 static void
+on_code_traded (GObject *src, GAsyncResult *res, gpointer data)
+{
+  SignIn *s = data;
+  SoupMessage *msg = soup_session_get_async_result_message (SOUP_SESSION (src), res);
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GBytes) body = soup_session_send_and_read_finish (SOUP_SESSION (src), res, &error);
+  if (!s->finished) /* else it was stopped meanwhile: drop the answer */
+    keep_tokens (s, msg, body, error);
+  sign_in_unref (s);
+}
+
+static void
 trade_code (SignIn *s, const char *code)
 {
   g_autofree char *form = jn_oauth_code_form (&s->client, code, s->verifier, s->redirect);
@@ -224,7 +300,8 @@ trade_code (SignIn *s, const char *code)
   g_autoptr (GBytes) body = g_bytes_new (form, strlen (form));
   memset (form, 0, strlen (form));
   soup_message_set_request_body_from_bytes (msg, "application/x-www-form-urlencoded", body);
-  soup_session_send_and_read_async (s->g->session, msg, G_PRIORITY_DEFAULT, s->cancel, on_code_traded, s);
+  s->refs++; /* for on_code_traded */
+  soup_session_send_and_read_async (s->g->session, msg, G_PRIORITY_DEFAULT, s->stop, on_code_traded, s);
   g_object_unref (msg);
 }
 
@@ -235,41 +312,20 @@ static const char PAGE_NOT[] =
   "<!doctype html><meta charset=utf-8><title>Notes</title><body style=\"font:16px sans-serif;margin:3em\">"
   "<h2>Not signed in</h2><p>Go back to Notes to see why, and try again.</p>";
 
-/* The browser's one request to 127.0.0.1: "GET /?state=…&code=… HTTP/1.1". */
-static gboolean
-on_incoming (GSocketService *service, GSocketConnection *conn, GObject *source, gpointer data)
+/* A whole request line arrived (or as much as ever will): "GET
+ * /?state=…&code=… HTTP/1.1". Only one carrying this sign-in's state
+ * counts: anything else (another program here, the browser asking for an
+ * icon) is turned away and the sign-in goes on waiting. */
+static void
+answer_visit (SignIn *s, Visit *v)
 {
-  (void) service; (void) source;
-  SignIn *s = data;
-  if (s->finished)
-    return TRUE;
-  /* Whatever connects must say its piece quickly. */
-  g_socket_set_timeout (g_socket_connection_get_socket (conn), 5);
-  GInputStream *in = g_io_stream_get_input_stream (G_IO_STREAM (conn));
-  char buf[8192];
-  gsize got = 0;
-  /* Up to the end of the request line: a few hundred bytes at most. */
-  while (got < sizeof buf - 1)
-    {
-      gssize n = g_input_stream_read (in, buf + got, sizeof buf - 1 - got, NULL, NULL);
-      if (n <= 0)
-        break;
-      got += (gsize) n;
-      buf[got] = '\0';
-      if (strstr (buf, "\r\n") != NULL)
-        break;
-    }
-  buf[got] = '\0';
   g_autofree char *path = NULL;
-  if (g_str_has_prefix (buf, "GET "))
+  if (g_str_has_prefix (v->buf, "GET "))
     {
-      const char *start = buf + 4, *end = strchr (start, ' ');
+      const char *start = v->buf + 4, *end = strpbrk (start, " \r\n");
       if (end != NULL)
         path = g_strndup (start, (gsize) (end - start));
     }
-  /* Only an answer carrying this sign-in's state counts: anything else
-   * (another program on this laptop, the browser asking for an icon) is
-   * turned away and the sign-in goes on waiting. */
   const char *q = path != NULL ? strchr (path, '?') : NULL;
   g_autoptr (GHashTable) params = q != NULL ? g_uri_parse_params (q + 1, -1, "&", G_URI_PARAMS_NONE, NULL) : NULL;
   gboolean ours = params != NULL && g_strcmp0 (g_hash_table_lookup (params, "state"), s->state) == 0;
@@ -279,18 +335,75 @@ on_incoming (GSocketService *service, GSocketConnection *conn, GObject *source, 
   const char *page = ok ? PAGE_OK : PAGE_NOT;
   g_autofree char *reply = g_strdup_printf ("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
                                             "Content-Length: %zu\r\nConnection: close\r\n\r\n%s", strlen (page), page);
-  GOutputStream *out = g_io_stream_get_output_stream (G_IO_STREAM (conn));
+  /* A few hundred bytes into an empty socket: this does not wait. */
+  GOutputStream *out = g_io_stream_get_output_stream (G_IO_STREAM (v->conn));
   g_output_stream_write_all (out, reply, strlen (reply), NULL, NULL, NULL);
-  g_io_stream_close (G_IO_STREAM (conn), NULL, NULL);
   if (!ours)
-    return TRUE;
+    return;
   if (!ok)
     sign_in_finish (s, FALSE, error != NULL ? error->message : "Google sent no sign-in code; try again.");
   else
     {
-      g_socket_service_stop (s->service);
+      g_socket_service_stop (s->service); /* one answer is all it takes */
       trade_code (s, code);
     }
+}
+
+static void read_more (Visit *v);
+
+static void
+on_read (GObject *src, GAsyncResult *res, gpointer data)
+{
+  Visit *v = data;
+  gssize n = g_input_stream_read_finish (G_INPUT_STREAM (src), res, NULL);
+  if (n > 0)
+    {
+      v->got += (gsize) n;
+      v->buf[v->got] = '\0';
+      if (strstr (v->buf, "\r\n") == NULL && v->got < sizeof v->buf - 1)
+        {
+          read_more (v);
+          return;
+        }
+    }
+  SignIn *s = v->s;
+  gboolean cut_off = g_cancellable_is_cancelled (v->cancel); /* too slow, or the sign-in ended */
+  if (s != NULL)
+    g_ptr_array_remove_fast (s->visits, v);
+  if (s != NULL && !cut_off && v->got > 0)
+    answer_visit (s, v);
+  visit_free (v);
+}
+
+static void
+read_more (Visit *v)
+{
+  GInputStream *in = g_io_stream_get_input_stream (G_IO_STREAM (v->conn));
+  g_input_stream_read_async (in, v->buf + v->got, sizeof v->buf - 1 - v->got, G_PRIORITY_DEFAULT, v->cancel, on_read,
+                             v);
+}
+
+static gboolean
+on_visit_timeout (gpointer data)
+{
+  Visit *v = data;
+  v->timeout_id = 0;
+  g_cancellable_cancel (v->cancel);
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+on_incoming (GSocketService *service, GSocketConnection *conn, GObject *source, gpointer data)
+{
+  (void) service; (void) source;
+  SignIn *s = data;
+  Visit *v = g_new0 (Visit, 1);
+  v->s = s;
+  v->conn = g_object_ref (conn);
+  v->cancel = g_cancellable_new ();
+  v->timeout_id = g_timeout_add_seconds (VISIT_TIMEOUT, on_visit_timeout, v);
+  g_ptr_array_add (s->visits, v);
+  read_more (v);
   return TRUE;
 }
 
@@ -303,22 +416,46 @@ on_sign_in_timeout (gpointer data)
   return G_SOURCE_REMOVE;
 }
 
-static void
-open_in_browser (const char *uri, gpointer user)
+static gboolean
+on_sign_in_cancelled (GCancellable *cancel, gpointer data)
+{
+  (void) cancel;
+  SignIn *s = data;
+  g_clear_pointer (&s->cancelled, g_source_unref); /* this source ends now */
+  sign_in_finish (s, FALSE, NULL);
+  return G_SOURCE_REMOVE;
+}
+
+/* Not as Notes' child: through the desktop's portal (see openuri.h). */
+static gboolean
+open_in_browser (const char *uri, gpointer user, GError **error)
 {
   (void) user;
-  g_app_info_launch_default_for_uri (uri, NULL, NULL);
+  return jr_open_uri (uri, error);
 }
 
 static void
 google_sign_in (JnBackup *self, GCancellable *cancel, JnSignInDone done, gpointer user)
 {
   Google *g = (Google *) self;
+  /* One at a time: a new sign-in (you clicked again, the old tab left
+   * open) replaces the old one, which ends quietly. */
+  if (g->signing != NULL)
+    sign_in_finish (g->signing, FALSE, NULL);
   SignIn *s = g_new0 (SignIn, 1);
+  s->refs = 1;
   s->g = g;
   s->done = done;
   s->user = user;
-  s->cancel = cancel != NULL ? g_object_ref (cancel) : g_cancellable_new ();
+  s->visits = g_ptr_array_new ();
+  s->stop = g_cancellable_new ();
+  g->signing = s;
+  if (cancel != NULL)
+    {
+      s->cancelled = g_cancellable_source_new (cancel);
+      g_source_set_callback (s->cancelled, G_SOURCE_FUNC (on_sign_in_cancelled), s, NULL);
+      g_source_attach (s->cancelled, NULL);
+    }
   g_autoptr (GError) error = NULL;
   if (!read_client (g, &s->client, &error))
     {
@@ -351,7 +488,13 @@ google_sign_in (JnBackup *self, GCancellable *cancel, JnSignInDone done, gpointe
       page = g_steal_pointer (&moved);
     }
   s->timeout_id = g_timeout_add_seconds (SIGN_IN_TIMEOUT, on_sign_in_timeout, s);
-  g->open_uri (page, g->open_user);
+  if (!g->open_uri (page, g->open_user, &error))
+    {
+      g_autofree char *m = g_strdup_printf ("Notes could not open your web browser for Google's sign-in page (%s). "
+                                            "Choose a default web browser in Settings, then sign in again.",
+                                            error != NULL ? error->message : "no reason given");
+      sign_in_finish (s, FALSE, m);
+    }
 }
 
 static void
@@ -383,8 +526,8 @@ google_sign_out (JnBackup *self)
 
 /* ---- backing up ---------------------------------------------------------------- */
 
-typedef struct {
-  Google        *g;
+struct Job {
+  Google        *g;      /* NULL once the client is freed */        /* NULL once the client is freed */
   JnDriveRequest req;      /* strings owned here */
   GCancellable  *cancel;
   JnBackupEach   each;
@@ -396,11 +539,13 @@ typedef struct {
   GArray        *results;  /* JnDriveResult, every one handed to `each` */
   char          *root, *end_error;
   gboolean       ended;
-} Job;
+};
 
 static void
 job_free (Job *job)
 {
+  if (job->g != NULL)
+    g_ptr_array_remove_fast (job->g->jobs, job);
   jn_drive_request_clear (&job->req);
   if (job->json != NULL)
     memset (job->json, 0, strlen (job->json)); /* it held the token */
@@ -438,7 +583,7 @@ job_end (Job *job, const char *stopped)
     a.error = job->end_error;
   /* An expired or revoked sign-in: forget it, so the window offers Sign
    * in again. */
-  if (a.error != NULL && strstr (a.error, "Sign in") != NULL)
+  if (a.error != NULL && strstr (a.error, "Sign in") != NULL && job->g != NULL)
     forget (job->g);
   job->done (&a, NULL, job->user);
   job_free (job);
@@ -534,6 +679,11 @@ on_token (GObject *src, GAsyncResult *res, gpointer data)
   SoupMessage *msg = soup_session_get_async_result_message (SOUP_SESSION (src), res);
   g_autoptr (GError) error = NULL;
   g_autoptr (GBytes) body = soup_session_send_and_read_finish (SOUP_SESSION (src), res, &error);
+  if (job->g == NULL) /* the client was freed meanwhile */
+    {
+      job_fail (job, "Stopped.");
+      return;
+    }
   if (body == NULL)
     {
       g_autofree char *m = g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
@@ -570,6 +720,7 @@ google_run (JnBackup *self, const char *root, const JnDriveItem *items, gsize n_
   Google *g = (Google *) self;
   Job *job = g_new0 (Job, 1);
   job->g = g;
+  g_ptr_array_add (g->jobs, job);
   job->each = each;
   job->done = done;
   job->user = user;
@@ -617,6 +768,18 @@ static void
 google_free (JnBackup *self)
 {
   Google *g = (Google *) self;
+  /* Notes is closing: a sign-in under way ends quietly; a backup under
+   * way loses its client (its helper is stopped, its answer still comes). */
+  if (g->signing != NULL)
+    sign_in_finish (g->signing, FALSE, NULL);
+  for (guint i = 0; i < g->jobs->len; i++)
+    {
+      Job *job = g_ptr_array_index (g->jobs, i);
+      job->g = NULL;
+      if (job->proc != NULL)
+        g_subprocess_force_exit (job->proc);
+    }
+  g_ptr_array_unref (g->jobs);
   g_free (g->helper);
   g_free (g->client_file);
   g_free (g->auth_url);
@@ -655,5 +818,6 @@ jn_google_backup_new (const JnBackupConfig *config)
   g->open_uri = config->open_uri != NULL ? config->open_uri : open_in_browser;
   g->open_user = config->open_user;
   g->session = soup_session_new_with_options ("timeout", 30, "user-agent", "Journal-Notes/1.0 (backup)", NULL);
+  g->jobs = g_ptr_array_new ();
   return &g->base;
 }

@@ -558,9 +558,11 @@ typedef struct {
   int           calls;
   char         *note, *subject, *topic, *links, *style;
   const char   *reply, *error;
+  gboolean      hold;  /* does not answer until fake_answer (held) */
+  struct FakeCall *held;
 } Fake;
 
-typedef struct {
+typedef struct FakeCall {
   Fake         *f;
   JnEnhanceDone done;
   gpointer      user;
@@ -600,7 +602,10 @@ fake_start (JnEnhancer *self, const JnAiInput *in, char **links, GCancellable *c
   c->f = f;
   c->done = done;
   c->user = user;
-  g_timeout_add (50, fake_answer, c); /* answers later, like the real one */
+  if (f->hold)
+    f->held = c;
+  else
+    g_timeout_add (50, fake_answer, c); /* answers later, like the real one */
 }
 
 static char *
@@ -651,7 +656,7 @@ test_enhance (void)
   gint64 old = jn_db_start_session (db, t0, 100);
   jn_db_save_session (db, old, "- pages are fixed-size blocks", "", 200);
   JnWindow *win = jn_window_new (NULL, db, dir);
-  Fake fake = { { fake_start, fake_describe, fake_free }, 0, NULL, NULL, NULL, NULL, NULL, "## Idea\n- more [1]", NULL };
+  Fake fake = { { fake_start, fake_describe, fake_free }, 0, NULL, NULL, NULL, NULL, NULL, "## Idea\n- more [1]", NULL, FALSE, NULL };
   jn_window_set_enhancer (win, &fake.base);
   gtk_window_present (GTK_WINDOW (win));
   pump (200);
@@ -1444,10 +1449,13 @@ typedef struct {
   char     *last_markdown;
   int       runs;
   guint     step_ms;      /* results come this far apart (a slow Drive) */
+  gboolean  sign_in_waits; /* you have not finished on Google's page yet */
+  struct FakeReply *pending; /* that sign-in */
 } FakeDrive;
 
-typedef struct {
+typedef struct FakeReply {
   FakeDrive     *f;
+  GSource       *watch;   /* a waiting sign-in's cancellable */
   JnDriveAnswer  a;
   gsize          sent;    /* results handed to `each` so far */
   JnBackupEach   each;
@@ -1456,6 +1464,8 @@ typedef struct {
   JnSignInDone   signed_done;
   GCancellable  *cancel;
 } FakeReply;
+
+static int fake_quiet_ends; /* sign-ins that ended quietly (stopped) */
 
 static gboolean fake_can (JnBackup *b) { (void) b; return TRUE; }
 static gboolean fake_signed (JnBackup *b) { return ((FakeDrive *) b)->signed_in; }
@@ -1470,15 +1480,57 @@ fake_sign_in_idle (gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+/* Ends the waiting sign-in as the real client does: signed in, or
+ * stopped (quietly: ok FALSE, no error). */
+static void
+fake_sign_in_end (FakeDrive *f, gboolean ok)
+{
+  FakeReply *r = f->pending;
+  if (r == NULL)
+    return;
+  f->pending = NULL;
+  if (r->watch != NULL)
+    {
+      g_source_destroy (r->watch);
+      g_source_unref (r->watch);
+    }
+  f->signed_in = f->signed_in || ok;
+  fake_quiet_ends += !ok;
+  r->signed_done (ok, NULL, r->user);
+  g_free (r);
+}
+
+static gboolean
+fake_sign_in_cancelled (GCancellable *cancel, gpointer data)
+{
+  (void) cancel;
+  FakeDrive *f = data;
+  g_clear_pointer (&f->pending->watch, g_source_unref); /* this source ends now */
+  fake_sign_in_end (f, FALSE);
+  return G_SOURCE_REMOVE;
+}
+
 static void
 fake_sign_in (JnBackup *b, GCancellable *cancel, JnSignInDone done, gpointer user)
 {
-  (void) cancel;
+  FakeDrive *f = (FakeDrive *) b;
+  fake_sign_in_end (f, FALSE); /* one at a time */
   FakeReply *r = g_new0 (FakeReply, 1);
-  r->f = (FakeDrive *) b;
+  r->f = f;
   r->signed_done = done;
   r->user = user;
-  g_idle_add (fake_sign_in_idle, r);
+  if (!f->sign_in_waits)
+    {
+      g_idle_add (fake_sign_in_idle, r);
+      return;
+    }
+  f->pending = r;
+  if (cancel != NULL)
+    {
+      r->watch = g_cancellable_source_new (cancel);
+      g_source_set_callback (r->watch, G_SOURCE_FUNC (fake_sign_in_cancelled), f, NULL);
+      g_source_attach (r->watch, NULL);
+    }
 }
 
 static void fake_sign_out (JnBackup *b) { ((FakeDrive *) b)->signed_in = FALSE; }
@@ -1555,6 +1607,7 @@ static void
 fake_drive_free (JnBackup *b)
 {
   FakeDrive *f = (FakeDrive *) b;
+  fake_sign_in_end (f, FALSE); /* as the real one: stopped, quietly */
   g_string_free (f->asked, TRUE);
   g_free (f->last_markdown);
   /* fail_topic / shared_topic point at literals */
@@ -1746,6 +1799,116 @@ test_drive (void)
   remove_tree (dir);
 }
 
+/* Signing in: waiting for you on Google's page is shown; clicking again
+ * starts over quietly; finishing signs in; closing the window while it
+ * waits ends the sign-in quietly and frees everything. */
+static void
+test_drive_sign_in (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  JnWindow *win = jn_window_new (NULL, jn_db_open (path, NULL), dir);
+  FakeDrive *f = fake_drive_new ();
+  f->sign_in_waits = TRUE;
+  jn_window_set_drive (win, &f->base);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (50);
+  JrCases c = { "drive sign-in", 0, 0 };
+
+  jn_window_drive_sign_in (win);
+  pump (20);
+  jr_case (&c, "waiting: said in the menu", jn_window_is_signing_in (win) &&
+           g_str_has_prefix (jn_window_drive_line (win), "Finish signing in") &&
+           g_str_has_prefix (jn_window_status (win), "Opening Google"), "signing=%d line \"%s\" status \"%s\"",
+           jn_window_is_signing_in (win), jn_window_drive_line (win), jn_window_status (win));
+
+  int quiet = fake_quiet_ends;
+  jn_window_drive_sign_in (win);
+  pump (20);
+  jr_case (&c, "clicked again: starts over quietly", jn_window_is_signing_in (win) && fake_quiet_ends == quiet + 1 &&
+           g_str_has_prefix (jn_window_status (win), "Opening Google"), "signing=%d quiet ends %d status \"%s\"",
+           jn_window_is_signing_in (win), fake_quiet_ends - quiet, jn_window_status (win));
+
+  fake_sign_in_end (f, TRUE);
+  pump (20);
+  jr_case (&c, "finished: signed in", !jn_window_is_signing_in (win) &&
+           g_str_has_prefix (jn_window_status (win), "Signed in to Google Drive") &&
+           g_str_has_prefix (jn_window_drive_line (win), "Signed in"), "signing=%d status \"%s\" line \"%s\"",
+           jn_window_is_signing_in (win), jn_window_status (win), jn_window_drive_line (win));
+
+  jn_window_drive_sign_out (win);
+  jn_window_drive_sign_in (win);
+  pump (20);
+  quiet = fake_quiet_ends;
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (50);
+  jr_case (&c, "closed while waiting: ended quietly, window gone", win == NULL && fake_quiet_ends == quiet + 1,
+           "closed=%d quiet ends %d", win == NULL, fake_quiet_ends - quiet);
+  jr_cases_done (&c);
+  remove_tree (dir);
+}
+
+/* Closing Notes while an Enhance is still out (the AI answers only after
+ * the program has ended): the study time so far and the day's backup
+ * are still written as the window closes. */
+static void
+test_close_while_enhancing (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-close-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  g_autofree char *backups = g_build_filename (dir, "backups", NULL);
+  JnDb *db = jn_db_open (path, NULL);
+  jn_db_set_setting (db, "ai_consent", "yes");
+  JnWindow *win = jn_window_new (NULL, db, dir);
+  jn_window_set_backup_dir (win, backups);
+  Fake fake = { { fake_start, fake_describe, fake_free }, 0, NULL, NULL, NULL, NULL, NULL, "## Idea", NULL, TRUE, NULL };
+  jn_window_set_enhancer (win, &fake.base);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (100);
+  JnClockBar *b = jn_window_clock_bar (win);
+  Clock k = { 0 };
+  jn_clock_bar_set_now_func (b, fake_now, &k);
+  jn_window_add_subject (win, "DSA");
+  gint64 heaps = jn_window_add_topic (win, "Heaps");
+  JnEditor *e = jn_window_editor (win);
+  jn_editor_focus (e);
+  type (e, "- sift down");
+  gint64 session = jn_window_session (win);
+  jn_clock_bar_toggle (b);
+  at (&k, b, 40); /* under a minute: not reported yet */
+  JrCases c = { "close while enhancing", 0, 0 };
+  jr_case (&c, "enhancing", jn_window_enhance (win) && fake.held != NULL, "not started");
+
+  g_object_add_weak_pointer (G_OBJECT (win), (gpointer *) &win);
+  gtk_window_close (GTK_WINDOW (win));
+  pump (100);
+  JnDb *look = jn_db_open (path, NULL);
+  gint64 studied = jn_db_studied (look, heaps, 0);
+  jn_db_close (look);
+  g_autofree char *latest = jn_backup_latest (backups);
+  JnDb *copy = latest != NULL ? jn_db_open (latest, NULL) : NULL;
+  JnSession s = { 0 };
+  gboolean in_copy = copy != NULL && jn_db_get_session (copy, session, &s) && g_strcmp0 (s.body, "- sift down") == 0;
+  jn_session_clear (&s);
+  g_clear_pointer (&copy, jn_db_close);
+  jr_case (&c, "study time written at close", studied == 40, "Expected 40 s  Got %" G_GINT64_FORMAT, studied);
+  jr_case (&c, "the day's backup made at close", in_copy, "latest backup %s", latest);
+
+  /* The answer comes after all: the window goes, nothing breaks. */
+  if (fake.held != NULL)
+    fake_answer (fake.held);
+  pump (50);
+  jr_case (&c, "the late answer: window gone", win == NULL, "still alive");
+  g_free (fake.note);
+  g_free (fake.subject);
+  g_free (fake.topic);
+  g_free (fake.links);
+  g_free (fake.style);
+  jr_cases_done (&c);
+  remove_tree (dir);
+}
+
 /* ---- memory: nothing keeps growing ---------------------------------------- */
 
 static gsize
@@ -1881,6 +2044,8 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/sidebar-highlight", test_sidebar_highlight);
   g_test_add_func ("/notes-ui/sidebar-folds", test_sidebar_folds);
   g_test_add_func ("/notes-ui/drive", test_drive);
+  g_test_add_func ("/notes-ui/drive-sign-in", test_drive_sign_in);
+  g_test_add_func ("/notes-ui/close-while-enhancing", test_close_while_enhancing);
   g_test_add_func ("/notes-ui/no-growth", test_no_growth);
   return g_test_run ();
 }

@@ -18,6 +18,9 @@
 #include <gio/gio.h>
 #include "driveproto.h"
 
+/* How a sign-in ended: signed in (ok), failed (`error` says why, in plain
+ * words), or stopped (ok FALSE, error NULL: its cancellable, a newer
+ * sign-in, or the client freed; nothing to tell). Called exactly once. */
 typedef void (*JnSignInDone) (gboolean ok, const char *error, gpointer user);
 /* One topic's result, as soon as the helper has it (record it now: a
  * backup cut off later still made this Doc). `root` is the Notes folder
@@ -32,6 +35,8 @@ struct JnBackup {
   /* Is there a client file to sign in with? (see JnBackupConfig) */
   gboolean (*can_sign_in) (JnBackup *self);
   gboolean (*signed_in)   (JnBackup *self);
+  /* Opens Google's page in the browser and waits (5 minutes at most) for
+   * its answer at 127.0.0.1. One at a time: a new sign-in stops the old. */
   void     (*sign_in)     (JnBackup *self, GCancellable *cancel, JnSignInDone done, gpointer user);
   void     (*sign_out)    (JnBackup *self);
   /* Backs up `items` (copied) into the Notes folder `root` (NULL: none
@@ -39,6 +44,8 @@ struct JnBackup {
    * handed to `each`. */
   void     (*run)         (JnBackup *self, const char *root, const JnDriveItem *items, gsize n_items,
                            GCancellable *cancel, JnBackupEach each, JnBackupDone done, gpointer user);
+  /* A sign-in under way ends (stopped) before this returns; a backup under
+   * way has its helper stopped. */
   void     (*free)        (JnBackup *self);
 };
 
@@ -60,8 +67,9 @@ typedef struct {
   guint16       ports[JN_DRIVE_MAX_PORTS];                    /* none given: 443 */
   gsize         n_ports;
   JnSecretStore store;       /* all NULL: the login keyring */
-  /* Opens the sign-in page; NULL: the default browser. */
-  void        (*open_uri) (const char *uri, gpointer user);
+  /* Opens the sign-in page; FALSE (and why) if no browser took it.
+   * NULL: the default browser, through the desktop's portal. */
+  gboolean    (*open_uri) (const char *uri, gpointer user, GError **error);
   gpointer      open_user;
 } JnBackupConfig;
 

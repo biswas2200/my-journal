@@ -65,18 +65,22 @@ programs_dep = declare_dependency(
   dependencies : glib_dep,
 )
 
-# Reporting a bug, a UI problem or an idea (the start screen and Notes):
-# the GitHub form's address. Plain GLib, nothing of either program.
-report_lib = static_library('journal-report', 'src/shared/report.c', dependencies : glib_dep)
-report_dep = declare_dependency(
-  link_with : report_lib,
-  include_directories : include_directories('src/shared'),
-  dependencies : glib_dep,
-)
 
 # Notes' own core: plain logic with no UI and nothing of the Journal.
 notes_core_inc = include_directories('src/notes/core')
 gio_dep = dependency('gio-2.0', version : '>= 2.76')
+# Shared by the start screen and Notes: the address of a bug report, a
+# UI problem or an idea (GitHub's forms), and opening an address through
+# the desktop's portal (Notes is locked down; a browser it started would
+# be too). Nothing of either program.
+shared_lib = static_library('journal-shared', 'src/shared/report.c', 'src/shared/openuri.c',
+  dependencies : gio_dep,
+)
+shared_dep = declare_dependency(
+  link_with : shared_lib,
+  include_directories : include_directories('src/shared'),
+  dependencies : gio_dep,
+)
 # A coverage build must still write its .gcda files from inside the
 # Notes file lock; only such builds open those object folders.
 notes_core_args = []
@@ -199,11 +203,11 @@ notes_drive_net_dep = declare_dependency(
 )
 # Notes' side: signing in, the keyring, starting journal-drive.
 notes_drive_client_lib = static_library('notes-drive-client', 'src/notes/drive/driveclient.c',
-  dependencies : [notes_drive_dep, soup_dep, secret_dep],
+  dependencies : [notes_drive_dep, soup_dep, secret_dep, shared_dep],
 )
 notes_drive_client_dep = declare_dependency(
   link_with : notes_drive_client_lib,
-  dependencies : [notes_drive_dep, soup_dep, secret_dep],
+  dependencies : [notes_drive_dep, soup_dep, secret_dep, shared_dep],
 )
 notes_ui_lib = static_library('notes-ui',
   'src/notes/ui/editor.c',
@@ -211,13 +215,15 @@ notes_ui_lib = static_library('notes-ui',
   'src/notes/ui/clock_bar.c',
   'src/notes/ui/notes_window.c',
   notes_resources[1],
-  dependencies : [notes_core_dep, notes_client_dep, notes_drive_client_dep, gtk_dep, rsvg_dep, programs_dep],
+  dependencies : [notes_core_dep, notes_client_dep, notes_drive_client_dep, gtk_dep, rsvg_dep, programs_dep,
+                  shared_dep],
 )
 notes_ui_dep = declare_dependency(
   link_with : notes_ui_lib,
   sources : notes_resources,
   include_directories : include_directories('src/notes/ui'),
-  dependencies : [notes_core_dep, notes_client_dep, notes_drive_client_dep, gtk_dep, rsvg_dep, programs_dep],
+  dependencies : [notes_core_dep, notes_client_dep, notes_drive_client_dep, gtk_dep, rsvg_dep, programs_dep,
+                  shared_dep],
 )
 notes_exe = executable('journal-notes', 'src/notes/main.c',
   dependencies : notes_ui_dep,

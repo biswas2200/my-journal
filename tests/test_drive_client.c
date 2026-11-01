@@ -13,7 +13,15 @@
  * page signs nothing in; a backup works right after signing in and, in a
  * fresh start, from the kept refresh token; a revoked sign-in is
  * forgotten (Sign in is offered again); signing out revokes the token
- * at Google and forgets it here. */
+ * at Google and forgets it here.
+ *
+ * And the sign-in's rough edges: a program that connects to the port and
+ * says nothing does not freeze Notes or hold up Google's answer; a
+ * browser that cannot be opened says so at once instead of after five
+ * minutes; a second sign-in replaces the first quietly; a sign-in that
+ * is stopped, or whose client is freed (Notes closing), ends quietly and
+ * closes the port, even while the code is being traded; and (hidden,
+ * random) junk from other programs never signs anything in. */
 #include <string.h>
 #include <glib/gstdio.h>
 #include <libsoup/soup.h>
@@ -54,26 +62,86 @@ store_clear (gpointer user)
 
 /* ---- the fake browser ------------------------------------------------------------ */
 
-typedef enum { ALLOW, DENY, INTRUDER_FIRST } Answer;
+/* What "you" do on Google's page. NOWHERE: you never finish (the tab is
+ * left open); NO_BROWSER: no browser could be opened at all; IDLE_FIRST:
+ * another program connects first and says nothing; JUNK_FIRST: other
+ * programs send random junk first. */
+typedef enum { ALLOW, DENY, INTRUDER_FIRST, IDLE_FIRST, JUNK_FIRST, NOWHERE, NO_BROWSER } Answer;
 static Answer browser_answer;
 static char *page_challenge, *page_redirect;
+static gint browser_back; /* set (atomically) once the browser has its page back */
 
 typedef struct {
   char *redirect, *state;
   Answer answer;
+  guint32 seed;
 } Visit;
+
+/* A raw connection to the sign-in port, as any program here could make. */
+static GSocketConnection *
+connect_port (const char *redirect)
+{
+  g_autoptr (GUri) u = g_uri_parse (redirect, G_URI_FLAGS_NONE, NULL);
+  g_autoptr (GSocketClient) c = g_socket_client_new ();
+  return g_socket_client_connect_to_host (c, "127.0.0.1", (guint16) g_uri_get_port (u), NULL, NULL);
+}
+
+/* Random junk: bytes, a request line with the wrong state, a page the
+ * browser might ask for, half a line, or nothing at all. */
+static void
+send_junk (const char *redirect, GRand *rand, GPtrArray *keep)
+{
+  GSocketConnection *conn = connect_port (redirect);
+  if (conn == NULL)
+    return;
+  GOutputStream *out = g_io_stream_get_output_stream (G_IO_STREAM (conn));
+  g_autoptr (GString) s = g_string_new (NULL);
+  switch (g_rand_int_range (rand, 0, 5))
+    {
+    case 0:
+      for (int i = g_rand_int_range (rand, 1, 600); i > 0; i--)
+        g_string_append_c (s, (char) g_rand_int_range (rand, 1, 256));
+      break;
+    case 1:
+      g_string_append_printf (s, "GET /?state=%08x&code=evil HTTP/1.1\r\n\r\n", g_rand_int (rand));
+      break;
+    case 2:
+      g_string_append (s, "GET /favicon.ico HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+      break;
+    case 3:
+      g_string_append (s, "GET /?state="); /* and then nothing more */
+      break;
+    default:
+      break;
+    }
+  g_output_stream_write_all (out, s->str, s->len, NULL, NULL, NULL);
+  g_ptr_array_add (keep, conn); /* left open until the real answer is in */
+}
 
 static gpointer
 browse (gpointer data)
 {
   Visit *v = data;
   SoupSession *s = soup_session_new ();
+  g_autoptr (GPtrArray) keep = g_ptr_array_new_with_free_func (g_object_unref);
   if (v->answer == INTRUDER_FIRST)
     {
       g_autofree char *poke = g_strdup_printf ("%s?state=guessed&code=evil", v->redirect);
       SoupMessage *m = soup_message_new ("GET", poke);
       g_autoptr (GBytes) b = soup_session_send_and_read (s, m, NULL, NULL);
       g_object_unref (m);
+    }
+  else if (v->answer == IDLE_FIRST)
+    {
+      GSocketConnection *idle = connect_port (v->redirect);
+      if (idle != NULL)
+        g_ptr_array_add (keep, idle);
+    }
+  else if (v->answer == JUNK_FIRST)
+    {
+      g_autoptr (GRand) rand = g_rand_new_with_seed (v->seed);
+      for (int i = g_rand_int_range (rand, 1, 9); i > 0; i--)
+        send_junk (v->redirect, rand, keep);
     }
   g_autofree char *esc_state = g_uri_escape_string (v->state, NULL, FALSE);
   g_autofree char *back = v->answer == DENY
@@ -82,6 +150,7 @@ browse (gpointer data)
   SoupMessage *m = soup_message_new ("GET", back);
   g_autoptr (GBytes) b = soup_session_send_and_read (s, m, NULL, NULL);
   g_object_unref (m);
+  g_atomic_int_set (&browser_back, 1);
   g_object_unref (s);
   g_free (v->redirect);
   g_free (v->state);
@@ -89,21 +158,31 @@ browse (gpointer data)
   return NULL;
 }
 
-static void
-open_page (const char *uri, gpointer user)
+static gboolean
+open_page (const char *uri, gpointer user, GError **error)
 {
   (void) user;
+  if (browser_answer == NO_BROWSER)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No application is registered as handling this file");
+      return FALSE;
+    }
   g_autoptr (GUri) u = g_uri_parse (uri, G_URI_FLAGS_ENCODED_QUERY, NULL);
   g_autoptr (GHashTable) q = g_uri_parse_params (g_uri_get_query (u), -1, "&", G_URI_PARAMS_NONE, NULL);
   g_free (page_challenge);
   g_free (page_redirect);
   page_challenge = g_strdup (g_hash_table_lookup (q, "code_challenge"));
   page_redirect = g_strdup (g_hash_table_lookup (q, "redirect_uri"));
+  g_atomic_int_set (&browser_back, 0);
+  if (browser_answer == NOWHERE)
+    return TRUE;
   Visit *v = g_new0 (Visit, 1);
   v->redirect = g_strdup (page_redirect);
   v->state = g_strdup (g_hash_table_lookup (q, "state"));
   v->answer = browser_answer;
+  v->seed = g_test_rand_int ();
   g_thread_unref (g_thread_new ("browser", browse, v));
+  return TRUE;
 }
 
 /* ---- waiting for the client --------------------------------------------------------- */
@@ -111,6 +190,7 @@ open_page (const char *uri, gpointer user)
 typedef struct {
   gboolean done, ok;
   char *error;
+  int calls; /* times `done` was called: always 1 */
   int verified, n, each;
   GCancellable *cancel_after_first; /* cancelled when the first topic is reported */
 } Result;
@@ -120,7 +200,9 @@ on_signed_in (gboolean ok, const char *error, gpointer user)
 {
   Result *r = user;
   r->done = TRUE;
+  r->calls++;
   r->ok = ok;
+  g_free (r->error);
   r->error = g_strdup (error);
 }
 
@@ -300,6 +382,161 @@ test_client (void)
   jr_cases_done (&c);
 }
 
+/* ---- the sign-in's rough edges ------------------------------------------------------- */
+
+/* The longest the main loop went without running (Notes' window frozen). */
+static gint64 last_tick, longest_gap;
+
+static gboolean
+tick (gpointer data)
+{
+  (void) data;
+  gint64 now = g_get_monotonic_time ();
+  longest_gap = MAX (longest_gap, now - last_tick);
+  last_tick = now;
+  return G_SOURCE_CONTINUE;
+}
+
+static gboolean
+port_open (const char *redirect)
+{
+  g_autoptr (GSocketConnection) c = connect_port (redirect);
+  return c != NULL;
+}
+
+static void
+spin (int ms)
+{
+  gint64 until = g_get_monotonic_time () + ms * 1000;
+  while (g_get_monotonic_time () < until)
+    g_main_context_iteration (NULL, FALSE);
+}
+
+static void
+test_sign_in_edges (void)
+{
+  JrCases c = { "sign-in edges", 0, 0 };
+  JnBackup *b = client (client_file);
+
+  /* Another program connects and says nothing: Notes neither freezes
+   * nor waits for it before taking Google's answer. */
+  browser_answer = IDLE_FIRST;
+  Result r = { 0 };
+  last_tick = g_get_monotonic_time ();
+  longest_gap = 0;
+  guint ticker = g_timeout_add (20, tick, NULL);
+  gint64 start = g_get_monotonic_time ();
+  b->sign_in (b, NULL, on_signed_in, &r);
+  wait_for (&r);
+  gint64 took = (g_get_monotonic_time () - start) / 1000;
+  g_source_remove (ticker);
+  jr_case (&c, "an idle connection: no freeze, no wait", r.ok && took < 3000 && longest_gap < 1000 * 1000,
+           "ok=%d %s took %" G_GINT64_FORMAT " ms, longest freeze %" G_GINT64_FORMAT " ms", r.ok, r.error, took,
+           longest_gap / 1000);
+  g_free (r.error);
+  b->sign_out (b);
+
+  /* No browser could be opened: said at once, not after five minutes. */
+  browser_answer = NO_BROWSER;
+  r = (Result){ 0 };
+  start = g_get_monotonic_time ();
+  b->sign_in (b, NULL, on_signed_in, &r);
+  wait_for (&r);
+  took = (g_get_monotonic_time () - start) / 1000;
+  jr_case (&c, "no browser: said at once", !r.ok && r.error != NULL && strstr (r.error, "browser") != NULL &&
+           took < 2000 && !b->signed_in (b), "%s after %" G_GINT64_FORMAT " ms", r.error, took);
+  g_free (r.error);
+
+  /* A second sign-in replaces the first (its tab left open): the first
+   * ends quietly and its port is closed; the second signs in. */
+  browser_answer = NOWHERE;
+  Result first = { 0 };
+  b->sign_in (b, NULL, on_signed_in, &first);
+  spin (50);
+  g_autofree char *first_port = g_strdup (page_redirect);
+  browser_answer = ALLOW;
+  r = (Result){ 0 };
+  b->sign_in (b, NULL, on_signed_in, &r);
+  wait_for (&r);
+  spin (50);
+  jr_case (&c, "a second sign-in replaces the first", first.done && first.calls == 1 && !first.ok &&
+           first.error == NULL && r.ok && b->signed_in (b) && !port_open (first_port),
+           "first: done=%d ok=%d error=%s; second ok=%d %s; old port open=%d", first.done, first.ok, first.error, r.ok,
+           r.error, port_open (first_port));
+  g_free (r.error);
+  g_free (first.error);
+  b->sign_out (b);
+
+  /* Stopped (its cancellable): ends quietly, the port closes. */
+  browser_answer = NOWHERE;
+  GCancellable *cancel = g_cancellable_new ();
+  r = (Result){ 0 };
+  b->sign_in (b, cancel, on_signed_in, &r);
+  spin (50);
+  g_autofree char *stopped_port = g_strdup (page_redirect);
+  g_cancellable_cancel (cancel);
+  wait_for (&r);
+  spin (50);
+  jr_case (&c, "stopped: quietly, port closed", r.calls == 1 && !r.ok && r.error == NULL && !port_open (stopped_port),
+           "calls=%d ok=%d %s", r.calls, r.ok, r.error);
+  g_object_unref (cancel);
+  b->free (b);
+
+  /* The client freed while you are on Google's page (Notes closing). */
+  b = client (client_file);
+  browser_answer = NOWHERE;
+  r = (Result){ 0 };
+  b->sign_in (b, NULL, on_signed_in, &r);
+  spin (50);
+  g_autofree char *freed_port = g_strdup (page_redirect);
+  b->free (b);
+  gboolean told_at_once = r.done;
+  spin (100);
+  jr_case (&c, "freed while waiting: quietly, port closed", told_at_once && r.calls == 1 && !r.ok && r.error == NULL &&
+           !port_open (freed_port), "done=%d calls=%d %s", told_at_once, r.calls, r.error);
+
+  /* Freed while the code is being traded (Google is slow): no crash, one
+   * quiet answer, nothing kept. */
+  b = client (client_file);
+  fg_token_delay_ms = 800;
+  browser_answer = ALLOW;
+  r = (Result){ 0 };
+  b->sign_in (b, NULL, on_signed_in, &r);
+  gint64 until = g_get_monotonic_time () + 5 * G_USEC_PER_SEC;
+  while (!g_atomic_int_get (&browser_back) && g_get_monotonic_time () < until)
+    g_main_context_iteration (NULL, FALSE);
+  spin (50); /* the trade is on its way */
+  b->free (b);
+  spin (1200);
+  fg_token_delay_ms = 0;
+  jr_case (&c, "freed while trading: quietly, nothing kept", r.calls == 1 && !r.ok && r.error == NULL && kept == NULL,
+           "calls=%d ok=%d %s kept=%s", r.calls, r.ok, r.error, kept);
+  jr_cases_done (&c);
+}
+
+/* Hidden: other programs throw random junk at the port first; the real
+ * answer still signs in, and nothing else ever does. */
+static void
+test_sign_in_junk (void)
+{
+  JrCases c = { "sign-in junk (hidden)", 0, 0 };
+  for (int round = 0; round < 12; round++)
+    {
+      JnBackup *b = client (client_file);
+      browser_answer = JUNK_FIRST;
+      Result r = { 0 };
+      b->sign_in (b, NULL, on_signed_in, &r);
+      wait_for (&r);
+      jr_case (&c, "junk first, then the real answer", r.ok && r.calls == 1 && g_strcmp0 (kept, FG_REFRESH) == 0,
+               "round %d: ok=%d %s", round, r.ok, r.error);
+      g_free (r.error);
+      b->sign_out (b);
+      spin (20);
+      b->free (b);
+    }
+  jr_cases_done (&c);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -316,6 +553,8 @@ main (int argc, char **argv)
   g_assert_true (g_file_set_contents (client_file, "{\"installed\":{\"client_id\":\"123.apps.googleusercontent.com\","
                                       "\"client_secret\":\"" FG_SECRET "\"}}", -1, NULL));
   g_test_add_func ("/drive-client/sign-in-and-back-up", test_client);
+  g_test_add_func ("/drive-client/sign-in-edges", test_sign_in_edges);
+  g_test_add_func ("/drive-client/sign-in-junk", test_sign_in_junk);
   int rc = g_test_run ();
   g_remove (client_file);
   g_rmdir (dir);

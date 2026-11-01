@@ -17,6 +17,7 @@ char *fg_last_verifier, *fg_last_redirect, *fg_revoked;
 int fg_token_calls;
 gboolean fg_refresh_revoked;
 int fg_delay_ms;
+int fg_token_delay_ms;
 
 /* ---- the fake sign-in service ------------------------------------------------- */
 
@@ -217,6 +218,12 @@ fg_serve (SoupServer *server, SoupServerMessage *msg, const char *path, GHashTab
   g_mutex_lock (&fg_lock);
   if (g_str_has_prefix (path, "/oauth/"))
     {
+      if (fg_token_delay_ms > 0 && strcmp (path, "/oauth/token") == 0)
+        {
+          g_mutex_unlock (&fg_lock);
+          g_usleep ((gulong) fg_token_delay_ms * 1000);
+          g_mutex_lock (&fg_lock);
+        }
       fg_serve_sign_in (msg, path);
       g_mutex_unlock (&fg_lock);
       return;

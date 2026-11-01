@@ -25,32 +25,40 @@ jr_report_url (JrReportKind kind, const char *part, const char *version, const c
   return g_strconcat (JR_REPORT_REPO "/issues/new?", query, NULL);
 }
 
-/* PRETTY_NAME from os-release ("Ubuntu 26.04 LTS"), or NULL. */
+/* PRETTY_NAME from one os-release file's text ("Ubuntu 26.04 LTS"), or
+ * NULL. */
+static char *
+pretty_name (const char *text)
+{
+  g_auto (GStrv) lines = g_strsplit (text, "\n", -1);
+  char *v = NULL;
+  for (char **l = lines; *l != NULL && v == NULL; l++)
+    if (g_str_has_prefix (*l, "PRETTY_NAME="))
+      v = g_strstrip (g_strdup (*l + strlen ("PRETTY_NAME=")));
+  gsize n = v != NULL ? strlen (v) : 0;
+  if (n >= 2 && (v[0] == '"' || v[0] == '\'') && v[n - 1] == v[0])
+    {
+      memmove (v, v + 1, n - 2);
+      v[n - 2] = '\0';
+    }
+  return v;
+}
+
+/* The distribution's name, or NULL. (No cleanup attributes in the loop:
+ * GCC 13's analyzer misreads them.) */
 static char *
 distribution (void)
 {
   static const char *const files[] = { "/etc/os-release", "/usr/lib/os-release" };
-  for (gsize i = 0; i < G_N_ELEMENTS (files); i++)
+  char *name = NULL;
+  for (gsize i = 0; i < G_N_ELEMENTS (files) && name == NULL; i++)
     {
-      g_autofree char *text = NULL;
-      if (!g_file_get_contents (files[i], &text, NULL, NULL))
-        continue;
-      g_auto (GStrv) lines = g_strsplit (text, "\n", -1);
-      for (char **l = lines; *l != NULL; l++)
-        if (g_str_has_prefix (*l, "PRETTY_NAME="))
-          {
-            char *v = g_strdup (*l + strlen ("PRETTY_NAME="));
-            g_strstrip (v);
-            gsize n = strlen (v);
-            if (n >= 2 && (v[0] == '"' || v[0] == '\'') && v[n - 1] == v[0])
-              {
-                memmove (v, v + 1, n - 2);
-                v[n - 2] = '\0';
-              }
-            return v;
-          }
+      char *text = NULL;
+      if (g_file_get_contents (files[i], &text, NULL, NULL))
+        name = pretty_name (text);
+      g_free (text);
     }
-  return NULL;
+  return name;
 }
 
 char *
