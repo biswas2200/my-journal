@@ -37,6 +37,73 @@ jn_format_span (gint64 started, gint64 ended)
   return g_strdup_printf ("%s, %s–%s", day, from, to);
 }
 
+/* Is `p` (at a "<") the start of something a Markdown reader takes for
+ * web code ("<b>", "</i>", "<!--")? Not "1 < 2", not "l<r" (nothing
+ * closes it), not "<https://…>". */
+static gboolean
+html_start (const char *p)
+{
+  if (!g_ascii_isalpha (p[1]) && p[1] != '/' && p[1] != '!' && p[1] != '?')
+    return FALSE;
+  if (strchr (p, '>') == NULL)
+    return FALSE;
+  gboolean web = g_str_has_prefix (p + 1, "http://") || g_str_has_prefix (p + 1, "https://");
+  gsize len = strcspn (p, " >");
+  return !(web && p[len] == '>');
+}
+
+/* Is `p` (at a "&") a character reference ("&amp;", "&#169;") a reader
+ * would turn into one character? "AT&T" is not. */
+static gboolean
+entity (const char *p)
+{
+  const char *q = p + 1;
+  if (*q == '#')
+    q++;
+  const char *name = q;
+  while (g_ascii_isalnum (*q))
+    q++;
+  return q > name && *q == ';';
+}
+
+/* `line` as Markdown text that every reader shows as written: web code
+ * and character references are escaped, so none is dropped or turned
+ * into something else. Code spans are left alone (escapes do not work
+ * in them). */
+static void
+append_line (GString *md, const char *prefix, const char *line)
+{
+  g_string_append (md, prefix);
+  gboolean code = FALSE;
+  for (const char *p = line; *p != '\0'; p++)
+    {
+      if (*p == '`')
+        code = !code;
+      else if (!code && ((*p == '<' && html_start (p)) || (*p == '&' && entity (p))))
+        g_string_append_c (md, '\\');
+      g_string_append_c (md, *p);
+    }
+  g_string_append_c (md, '\n');
+}
+
+/* A Markdown-mode code fence ("```", "~~~"): what is between two of them
+ * is written as it is. */
+static gboolean
+fence (const char *line)
+{
+  while (*line == ' ')
+    line++;
+  return g_str_has_prefix (line, "```") || g_str_has_prefix (line, "~~~");
+}
+
+static gboolean
+table_row (const char *line)
+{
+  while (*line == ' ')
+    line++;
+  return *line == '|';
+}
+
 char *
 jn_export_file_name (const char *topic)
 {
@@ -87,7 +154,9 @@ jn_export_new (const char *subject, const char *topic)
   g_autofree char *t = jn_line_format (JN_TEXT, topic);
   g_autofree char *s = jn_line_format (JN_TEXT, subject);
   e->md = g_string_new (NULL);
-  g_string_append_printf (e->md, "# %s\n\nSubject: %s\n", t, s);
+  append_line (e->md, "# ", t);
+  g_string_append_c (e->md, '\n');
+  append_line (e->md, "Subject: ", s);
   return e;
 }
 
@@ -97,7 +166,7 @@ jn_export_set_studied (JnExport *e, gint64 seconds)
   if (seconds <= 0)
     return;
   g_autofree char *t = jn_format_studied (seconds);
-  g_string_append_printf (e->md, "Time studied: %s\n", t);
+  g_string_append_printf (e->md, "\nTime studied: %s\n", t); /* its own line, not the subject's */
 }
 
 void
@@ -119,17 +188,40 @@ jn_export_add_session (JnExport *e, gint64 started, gint64 ended, const char *so
     }
   if (any)
     g_string_append_c (e->md, '\n');
+  /* Every line of the note stays its own line in any Markdown reader. A
+   * plain or arrow line right after a bullet, a plain line or an arrow
+   * would be read as part of it ("lazy continuation"), so a blank line
+   * goes between; table rows stay together. */
   g_auto (GStrv) lines = g_strsplit (body != NULL ? body : "", "\n", -1);
+  gboolean in_code = FALSE, prev_blank = TRUE, prev_row = FALSE;
+  JnKind prev = JN_HEADING;
   for (char **l = lines; *l != NULL; l++)
     {
       const char *text;
       JnKind k = jn_line_parse (*l, &text);
-      if (k == JN_HEADING)
-        g_string_append_printf (e->md, "### %s\n", text);
-      else if (k == JN_SUBHEADING)
-        g_string_append_printf (e->md, "#### %s\n", text);
-      else
+      gboolean opens = k == JN_TEXT && fence (*l);
+      if (in_code)
+        {
+          g_string_append_printf (e->md, "%s\n", *l);
+          in_code = !opens;
+          continue;
+        }
+      gboolean blank = **l == '\0', row = k == JN_TEXT && table_row (*l);
+      gboolean folds = (k == JN_TEXT || k == JN_ARROW) && prev != JN_HEADING && prev != JN_SUBHEADING;
+      if (!blank && !prev_blank && folds && !(row && prev_row))
+        g_string_append_c (e->md, '\n');
+      if (opens)
         g_string_append_printf (e->md, "%s\n", *l);
+      else if (k == JN_HEADING)
+        append_line (e->md, "### ", text);
+      else if (k == JN_SUBHEADING)
+        append_line (e->md, "#### ", text);
+      else
+        append_line (e->md, "", *l);
+      in_code = opens;
+      prev = k;
+      prev_blank = blank;
+      prev_row = row;
     }
 }
 

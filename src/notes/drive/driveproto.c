@@ -348,7 +348,11 @@ jn_drive_error (const char *json, gssize len, int status)
 /* ---- checking the copy ---------------------------------------------------------- */
 
 /* The words of a Markdown text, in order, one space between: what it
- * says, whatever markup says it. */
+ * says, whatever markup says it. Marks that are markup in one reader and
+ * text in another are left out on both sides: "*" and "_" (Google Docs
+ * keeps "*stars*" as text, Notes reads it as italic) and the arrow that
+ * starts a Notes line (Google joins a line that follows a bullet onto
+ * it, the arrow and all). */
 static char *
 words (const char *markdown)
 {
@@ -381,12 +385,17 @@ words (const char *markdown)
   g_string_free (all, TRUE);
   GString *out = g_string_new (NULL);
   for (char **w = parts; *w != NULL; w++)
-    if (**w != '\0')
-      {
-        if (out->len > 0)
-          g_string_append_c (out, ' ');
-        g_string_append (out, *w);
-      }
+    {
+      GString *word = g_string_new (NULL);
+      for (const char *p = *w; *p != '\0'; p++)
+        if (g_str_has_prefix (p, "\xe2\x86\x92"))
+          p += 2;
+        else if (*p != '*' && *p != '_')
+          g_string_append_c (word, *p);
+      if (word->len > 0)
+        g_string_append_printf (out, "%s%s", out->len > 0 ? " " : "", word->str);
+      g_string_free (word, TRUE);
+    }
   return g_string_free (out, FALSE);
 }
 

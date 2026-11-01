@@ -1,6 +1,8 @@
 /* Tests for Notes export (src/notes/core/noteexport.c), LeetCode style
  * (see cases.h): the time a session took, the export file name, and a
- * topic as one Markdown file.
+ * topic as one Markdown file, read the same by any Markdown reader
+ * (Google Docs among them): every line of a note stays its own line,
+ * and nothing in it is taken for web code and dropped.
  *
  * Constraints: times are Unix seconds in the local time zone (tests run
  * in Asia/Kolkata, UTC+5:30, and in a zone with summer time); names are
@@ -11,6 +13,7 @@
 #include <glib.h>
 #include "cases.h"
 #include "noteexport.h"
+#include "noteline.h"
 #include "notesdb.h"
 
 /* 2026-10-28 14:05:00 in UTC+5:30 */
@@ -107,6 +110,7 @@ test_topic (void)
     "### Idea\n"           /* the note's own headings move down two levels */
     "- pre[0] = 0\n"
     "  - build once\n"
+    "\n"                   /* else the arrow would join the bullet above */
     "→ each query is O(1)\n"
     "#### Doubts\n"
     "what about 2D?\n"
@@ -126,7 +130,7 @@ test_topic (void)
   e = jn_export_new ("OS", "Paging");
   jn_export_set_studied (e, 3 * 3600 + 10 * MINUTE);
   g_autofree char *timed = jn_export_finish (e);
-  g_assert_cmpstr (timed, ==, "# Paging\n\nSubject: OS\nTime studied: 3 h 10 min\n");
+  g_assert_cmpstr (timed, ==, "# Paging\n\nSubject: OS\n\nTime studied: 3 h 10 min\n");
   e = jn_export_new ("OS", "Paging");
   jn_export_set_studied (e, 0);
   g_autofree char *untimed = jn_export_finish (e);
@@ -203,6 +207,120 @@ test_from_store (void)
   jn_db_close (db);
 }
 
+/* One session's note as it lands in the export: every line its own
+ * line in any Markdown reader. A plain or arrow line right after a
+ * bullet or another plain line would be read as part of it, so a blank
+ * line goes between; "<tag" and "&name;" would be read as web code and
+ * dropped, so they are escaped. Code blocks and tables are left alone.
+ *
+ * Constraints: a note is lines of the six kinds (noteline.h), any text. */
+static void
+test_markdown_lines (void)
+{
+  static const struct {
+    const char *name, *note, *want;
+  } cases[] = {
+    { "arrow after a sub-bullet", "- a\n  - b\n\xe2\x86\x92 c", "- a\n  - b\n\n\xe2\x86\x92 c\n" },
+    { "text after a bullet", "- a\nplain", "- a\n\nplain\n" },
+    { "two text lines", "one\ntwo", "one\n\ntwo\n" },
+    { "two arrows", "\xe2\x86\x92 a\n\xe2\x86\x92 b", "\xe2\x86\x92 a\n\n\xe2\x86\x92 b\n" },
+    { "bullet after text", "plain\n- a", "plain\n- a\n" },
+    { "heading after a list", "- a\n## Next", "- a\n#### Next\n" },
+    { "text after a heading", "# Idea\nplain", "### Idea\nplain\n" },
+    { "a blank line is not doubled", "- a\n\nplain", "- a\n\nplain\n" },
+    { "escaped marker after a bullet", "- a\n\\# not a heading", "- a\n\n\\# not a heading\n" },
+    { "code block untouched", "- a\n```\nx < y\n<b>\n\n```\nafter", "- a\n\n```\nx < y\n<b>\n\n```\n\nafter\n" },
+    { "table rows stay together", "| a | b |\n|---|---|\n| 1 | 2 |", "| a | b |\n|---|---|\n| 1 | 2 |\n" },
+    { "a tag is escaped", "- <tags> and <b>x</b>", "- \\<tags> and \\<b>x\\</b>\n" },
+    { "a web address in <> stays a link", "see <https://a.org/x>", "see <https://a.org/x>\n" },
+    { "less-than in maths stays", "- 1 < 2 and l<r", "- 1 < 2 and l<r\n" },
+    { "a tag inside code stays", "- `<b>` and <i>", "- `<b>` and \\<i>\n" },
+    { "an entity is escaped", "- &amp; &#169; AT&T", "- \\&amp; \\&#169; AT&T\n" },
+  };
+  JrCases c = { "markdown lines", 0, 0 };
+  for (gsize i = 0; i < G_N_ELEMENTS (cases); i++)
+    {
+      JnExport *e = jn_export_new ("A", "B");
+      jn_export_add_session (e, T1405, T1405, "", cases[i].note);
+      g_autofree char *md = jn_export_finish (e);
+      const char *body = strstr (md, "14:05\n\n");
+      body = body != NULL ? body + strlen ("14:05\n\n") : "";
+      jr_case (&c, cases[i].name, g_strcmp0 (body, cases[i].want) == 0, "Input \"%s\"  Expected \"%s\"  Got \"%s\"",
+               cases[i].note, cases[i].want, body);
+    }
+  jr_cases_done (&c);
+}
+
+/* Lines a reader could fold into the line before: plain or arrow text
+ * right after a bullet, a plain line or an arrow. */
+static gboolean
+foldable (const char *line)
+{
+  const char *text;
+  JnKind k = jn_line_parse (line, &text); /* also "* a", " + a": bullets */
+  return *line != '\0' && line[0] != '#' && (k == JN_TEXT || k == JN_ARROW);
+}
+
+/* Hidden: random notes. No line can fold into the one before, and taking
+ * out the blank lines and escapes the export added gives the note back. */
+static void
+test_markdown_lines_hidden (void)
+{
+  static const char *const kinds[] = { "", "- ", "  - ", "\xe2\x86\x92 ", "# ", "## ", "\\# " };
+  static const char *const bits[] = { "a", "b", " ", "<", "<b>", "&amp;", "&", "x<y", "`", "[1]", "*", "\xc3\xa9" };
+  JrCases c = { "markdown lines (hidden)", 0, 0 };
+  for (int round = 0; round < 2000; round++)
+    {
+      GString *note = g_string_new (NULL);
+      for (int n = g_test_rand_int_range (1, 9); n > 0; n--)
+        {
+          if (note->len > 0)
+            g_string_append_c (note, '\n');
+          g_string_append (note, kinds[g_test_rand_int_range (0, G_N_ELEMENTS (kinds))]);
+          for (int k = g_test_rand_int_range (0, 6); k > 0; k--)
+            g_string_append (note, bits[g_test_rand_int_range (0, G_N_ELEMENTS (bits))]);
+        }
+      JnExport *e = jn_export_new ("A", "B");
+      jn_export_add_session (e, T1405, T1405, "", note->str);
+      g_autofree char *md = jn_export_finish (e);
+      const char *body = strstr (md, "14:05\n\n") + strlen ("14:05\n\n");
+      g_auto (GStrv) out = g_strsplit (body, "\n", -1);
+      gboolean fences = strchr (note->str, '`') != NULL; /* a ``` may open a block: no rule inside */
+      gboolean folds = FALSE;
+      for (int i = 1; out[0] != NULL && out[i] != NULL && !fences; i++) /* an empty body has no line at all */
+        folds = folds || (foldable (out[i]) && *out[i - 1] != '\0' && !g_str_has_prefix (out[i - 1], "#"));
+      /* Back to the note: blank lines out, escapes out, headings up. */
+      GString *back = g_string_new (NULL);
+      for (int i = 0; out[i] != NULL; i++)
+        {
+          if (*out[i] == '\0')
+            continue;
+          g_autofree char *line = g_strdup (out[i]);
+          if (g_str_has_prefix (line, "### ") || g_str_has_prefix (line, "#### "))
+            memmove (line, line + 2, strlen (line + 2) + 1);
+          GString *l = g_string_new (NULL);
+          for (const char *p = line; *p != '\0'; p++)
+            if (!(p[0] == '\\' && (p[1] == '<' || p[1] == '&')))
+              g_string_append_c (l, *p);
+          if (back->len > 0)
+            g_string_append_c (back, '\n');
+          g_string_append (back, l->str);
+          g_string_free (l, TRUE);
+        }
+      GString *want = g_string_new (NULL);
+      g_auto (GStrv) in = g_strsplit (note->str, "\n", -1);
+      for (int i = 0; in[i] != NULL; i++)
+        if (*in[i] != '\0')
+          g_string_append_printf (want, "%s%s", want->len > 0 ? "\n" : "", in[i]);
+      jr_case (&c, "random note", !folds && strcmp (back->str, want->str) == 0, "Input \"%s\"  Got \"%s\"  folds=%d",
+               note->str, body, folds);
+      g_string_free (back, TRUE);
+      g_string_free (want, TRUE);
+      g_string_free (note, TRUE);
+    }
+  jr_cases_done (&c);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -212,6 +330,8 @@ main (int argc, char **argv)
   g_test_add_func ("/noteexport/span", test_span);
   g_test_add_func ("/noteexport/file-name", test_file_name);
   g_test_add_func ("/noteexport/topic", test_topic);
+  g_test_add_func ("/noteexport/markdown-lines", test_markdown_lines);
+  g_test_add_func ("/noteexport/hidden/markdown-lines", test_markdown_lines_hidden);
   g_test_add_func ("/noteexport/reference", test_reference);
   g_test_add_func ("/noteexport/from-store", test_from_store);
   return g_test_run ();
