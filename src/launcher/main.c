@@ -14,6 +14,14 @@
 #include "programs.h"
 #include "report_button.h"
 
+/* GTK_INTERFACE_COLOR_SCHEME_DARK (GTK 4.20+), set through a property so
+ * that an older GTK, without it, still builds and runs. Not 3: that is
+ * LIGHT, which 0.1.0 asked for by mistake. */
+#define DARK_SCHEME 2
+#if GTK_CHECK_VERSION (4, 20, 0)
+G_STATIC_ASSERT (GTK_INTERFACE_COLOR_SCHEME_DARK == DARK_SCHEME);
+#endif
+
 #define APP_ID "io.github.biswas2200.Journal"
 
 typedef struct {
@@ -201,7 +209,7 @@ build_home (Launcher *l)
 {
   GtkSettings *settings = gtk_settings_get_default ();
   if (g_object_class_find_property (G_OBJECT_GET_CLASS (settings), "gtk-interface-color-scheme"))
-    g_object_set (settings, "gtk-interface-color-scheme", 3 /* dark */, NULL);
+    g_object_set (settings, "gtk-interface-color-scheme", DARK_SCHEME, NULL);
   else
     g_object_set (settings, "gtk-application-prefer-dark-theme", TRUE, NULL);
   GtkCssProvider *css = gtk_css_provider_new ();

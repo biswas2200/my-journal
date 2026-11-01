@@ -16,6 +16,10 @@
 
 ### Fixed
 
+- The dark style is dark everywhere: since 0.1.0 all three programs
+  asked GTK for its *light* scheme by mistake, so menus, dialogs and the
+  window's own buttons came out light (or nearly invisible) on the dark
+  windows.
 - The sidebar now highlights what you clicked (a style rule hid it).
 - A backup cut off by a crash no longer leaves SQLite's side file
   behind, where the next backup could have picked it up.
