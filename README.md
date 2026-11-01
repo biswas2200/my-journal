@@ -217,11 +217,26 @@ small "app" in your own Google Cloud project (5 minutes, free):
    API**.
 2. **Google Auth Platform** (formerly "OAuth consent screen"): **Get
    started**, an app name (e.g. "Journal Notes"), your email, audience
-   **External**. Then under **Audience**, **Publish app** so its status
-   is **In production**: in "Testing" Google ends the sign-in after 7
-   days. An app only you use needs no review (`drive.file` is not a
-   sensitive scope); Google may show an "unverified app" notice once,
-   which you can pass.
+   **External**. Under **Branding**, Google also wants a home page and a
+   privacy policy before it lets the app out of "Testing":
+   - Application home page: `https://github.com/biswas2200/my-journal`
+   - Application privacy policy link:
+     `https://github.com/biswas2200/my-journal/blob/main/docs/privacy.md`
+     ([the policy](docs/privacy.md))
+   - Authorized domains: `github.com`
+   - no logo (a logo makes Google review the app)
+
+   Then under **Audience**, **Publish app** so its status is **In
+   production**: in "Testing" Google ends the sign-in after 7 days. An
+   app only you use needs no review (`drive.file` is not a sensitive
+   scope); Google may show an "unverified app" notice once, which you
+   can pass. A sign-in made while the app was still in "Testing" keeps
+   its 7 days: after publishing, **☁ Drive → Sign out**, then sign in
+   again. If Google will not take `github.com`, turn on GitHub Pages
+   for the repository (Settings, Pages, branch `main`, folder `/docs`)
+   and use `https://biswas2200.github.io/my-journal/`,
+   `https://biswas2200.github.io/my-journal/privacy` and
+   `biswas2200.github.io` instead.
 3. **Google Auth Platform → Clients → Create client**, type **Desktop
    app**. Download its JSON.
 4. Save it as `~/.config/journal-notes/google-client.json`:
@@ -238,6 +253,8 @@ small "app" in your own Google Cloud project (5 minutes, free):
 To remove Notes' access completely: **☁ Drive → Sign out** (it revokes
 the sign-in at Google), or at
 [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+What Notes sends where, and what it never does: the
+[privacy policy](docs/privacy.md).
 
 ## Reporting a problem
 
