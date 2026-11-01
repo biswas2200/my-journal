@@ -74,6 +74,18 @@
   day's backup at close. Both fixed: the backup is made as the window
   closes.
 
+### Found in the live check with Google
+
+- Export .md and the Drive backup now keep every line of a note on its
+  own line in any Markdown reader: a plain or arrow line right after a
+  bullet used to be read as part of the bullet (Google Docs joined
+  them), and "Time studied" joined the subject line.
+- Text that Markdown readers take for web code, like `<tags>`, is now
+  escaped: Google Docs dropped it from the Doc. The backup's read-back
+  check is what caught it, and it now reads Google's way of writing
+  Markdown (escaped links, `*` kept as text) without missing a lost
+  word.
+
 ### Faster with many notes
 
 - Measured with 10 000 topics and 100 000 sessions. The sidebar now

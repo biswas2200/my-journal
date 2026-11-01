@@ -5,6 +5,8 @@
 test_env = environment()
 test_env.set('G_DEBUG', 'fatal-warnings')
 test_env.set('G_SLICE', 'always-malloc')
+# Files recorded from real services (tests/data/README.md).
+test_env.set('JN_TEST_DATA', meson.current_source_dir() / 'data')
 
 isolated = find_program('run-isolated.sh')
 

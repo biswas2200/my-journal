@@ -238,6 +238,24 @@ push (GPtrArray *out, JnMdSpanKind kind, const char *text, gssize len, const cha
   g_ptr_array_add (out, s);
 }
 
+/* As push, with Markdown's backslash escapes taken out ("\\=" is "="):
+ * for the text of a link, bold or italic, which may hold them (Google
+ * Docs' export escapes freely). Not for code: escapes do not work in it. */
+static void
+push_unescaped (GPtrArray *out, JnMdSpanKind kind, const char *text, gssize len, const char *url)
+{
+  gsize n = len < 0 ? strlen (text) : (gsize) len;
+  GString *s = g_string_sized_new (n);
+  for (gsize i = 0; i < n; i++)
+    {
+      if (text[i] == '\\' && i + 1 < n && g_ascii_ispunct (text[i + 1]))
+        i++;
+      g_string_append_c (s, text[i]);
+    }
+  push (out, kind, s->str, (gssize) s->len, url);
+  g_string_free (s, TRUE);
+}
+
 /* Is the character just before p (in the text from start) a letter or
  * digit? p - 1 is never formed at the start: it would point outside. */
 static gboolean
@@ -372,7 +390,7 @@ jn_md_spans (const char *text)
           const char *end = strstr (p + 2, mark);
           if (end != NULL && end > p + 2 && end[-1] != ' ')
             {
-              push (out, JN_SPAN_BOLD, p + 2, end - p - 2, NULL);
+              push_unescaped (out, JN_SPAN_BOLD, p + 2, end - p - 2, NULL);
               p = end + 2;
               continue;
             }
@@ -385,7 +403,7 @@ jn_md_spans (const char *text)
             end = strchr (end + 1, p[0]);
           if (end != NULL && end > p + 1)
             {
-              push (out, JN_SPAN_ITALIC, p + 1, end - p - 1, NULL);
+              push_unescaped (out, JN_SPAN_ITALIC, p + 1, end - p - 1, NULL);
               p = end + 1;
               continue;
             }
@@ -427,7 +445,7 @@ jn_md_spans (const char *text)
                       if (close == p + 1)
                         push (out, JN_SPAN_LINK, url, -1, url);
                       else
-                        push (out, JN_SPAN_LINK, p + 1, close - p - 1, url);
+                        push_unescaped (out, JN_SPAN_LINK, p + 1, close - p - 1, url);
                       p = q + 1;
                       continue;
                     }

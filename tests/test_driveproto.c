@@ -362,6 +362,40 @@ test_same_text (void)
   jr_cases_done (&c);
 }
 
+/* Google Docs' real Markdown, recorded in the live check of 1 Nov 2026
+ * (tests/data): what Notes sent, and what Google gave back. Google
+ * escapes freely, writes links out, keeps "*" as text, and joined a line
+ * that came right after a bullet onto it; none of that is a different
+ * text. But it dropped "<tags>", taken for web code: that one is. */
+static char *
+data (const char *name)
+{
+  g_autofree char *path = g_build_filename (g_getenv ("JN_TEST_DATA"), name, NULL);
+  char *text = NULL;
+  g_assert_true (g_file_get_contents (path, &text, NULL, NULL));
+  return text;
+}
+
+static void
+test_same_text_google (void)
+{
+  static const struct { const char *name, *note, *doc; gboolean same; } t[] = {
+    { "Paging: escaped link, arrow joined to its bullet", "notes-paging-2026-11-01.md",
+      "google-paging-2026-11-01.md", TRUE },
+    { "Prefix sum: \"<tags>\" dropped by Google", "notes-prefix-sum-2026-11-01.md",
+      "google-prefix-sum-2026-11-01.md", FALSE },
+  };
+  JrCases c = { "same text (Google's own)", 0, 0 };
+  for (gsize i = 0; i < G_N_ELEMENTS (t); i++)
+    {
+      g_autofree char *note = data (t[i].note), *doc = data (t[i].doc);
+      gboolean got = jn_drive_same_text (note, doc);
+      jr_case (&c, t[i].name, got == t[i].same, "Expected %s  Got %s", t[i].same ? "same" : "different",
+               got ? "same" : "different");
+    }
+  jr_cases_done (&c);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -373,5 +407,6 @@ main (int argc, char **argv)
   g_test_add_func ("/driveproto/upload-body", test_upload_body);
   g_test_add_func ("/driveproto/find", test_find);
   g_test_add_func ("/driveproto/same-text", test_same_text);
+  g_test_add_func ("/driveproto/same-text-google", test_same_text_google);
   return g_test_run ();
 }
