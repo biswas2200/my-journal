@@ -10,7 +10,7 @@ meson compile -C build-cov
 meson test -C build-cov --print-errorlogs
 # Our own libraries and programs (a new one must be added here, or its
 # code counts as never run).
-ours='(journal-(core|ui|programs|shared)|notes-(core|ui|ai|fetch|client|drive|drive-net|drive-client))\.a\.p|journal(-diary|-notes|-ai|-drive)?\.p'
+ours='(journal-(core|ui|programs|shared|shared-ui)|notes-(core|ui|ai|fetch|client|drive|drive-net|drive-client))\.a\.p|journal(-diary|-notes|-ai|-drive)?\.p'
 rm -rf build-cov/gcov-reports
 mkdir -p build-cov/gcov-reports
 # gcov runs from build-cov, where the compiler ran, so "../src/..." in the

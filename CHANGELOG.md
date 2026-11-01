@@ -43,6 +43,15 @@
   sees only a one-hour token. One-time setup: see README, "Google Drive
   backup".
 
+### Report a problem
+
+- **⚑ Report** on the start screen and in Notes: *Something is broken*,
+  *Something looks wrong* or *An idea or improvement* opens that form on
+  the project's GitHub page, with the version and the system filled in.
+  Add what happened, the steps and screenshots there; nothing is sent
+  from the app. Journal problems are reported from the start screen
+  (the Journal may not open links).
+
 ### Signing in to Google, made sturdier
 
 - The sign-in page and links in notes now open through the desktop's

@@ -11,6 +11,7 @@
 #include <glib/gstdio.h>
 #include <gtk/gtk.h>
 #include "cases.h"
+#include "report_button.h"
 #include "clock_bar.h"
 #include "editor.h"
 #include "md_view.h"
@@ -1909,6 +1910,87 @@ test_close_while_enhancing (void)
   remove_tree (dir);
 }
 
+/* ---- reporting a problem -------------------------------------------------- */
+
+static char *opened_uri;
+static gboolean opener_fails;
+
+static gboolean
+record_open (const char *uri, gpointer user, GError **error)
+{
+  (void) user;
+  g_free (opened_uri);
+  opened_uri = g_strdup (uri);
+  if (opener_fails)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No application is registered as handling this file");
+      return FALSE;
+    }
+  return TRUE;
+}
+
+static void
+on_clipboard_text (GObject *src, GAsyncResult *res, gpointer data)
+{
+  char **out = data;
+  *out = gdk_clipboard_read_text_finish (GDK_CLIPBOARD (src), res, NULL);
+  if (*out == NULL)
+    *out = g_strdup ("");
+}
+
+/* "⚑ Report": each menu item opens its GitHub form with the version, the
+ * system and "[Notes]" filled in; with no browser, the address is on the
+ * clipboard and a dialog says so. */
+static void
+test_report (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("notes-ui-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename (dir, "notes.db", NULL);
+  JnWindow *win = jn_window_new (NULL, jn_db_open (path, NULL), dir);
+  gtk_window_present (GTK_WINDOW (win));
+  pump (50);
+  GtkWidget *button = jn_window_report_button (win);
+  jr_report_button_set_opener (button, record_open, NULL);
+  GtkWidget *menu = GTK_WIDGET (gtk_menu_button_get_popover (GTK_MENU_BUTTON (button)));
+  JrCases c = { "report", 0, 0 };
+  static const struct { const char *item, *form; } cases[] = {
+    { "Something is broken", "template=bug_report.yml" },
+    { "Something looks wrong", "template=ui_bug.yml" },
+    { "An idea or improvement", "template=improvement.yml" },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS (cases); i++)
+    {
+      g_clear_pointer (&opened_uri, g_free);
+      GtkWidget *item = find_button (menu, cases[i].item);
+      if (item != NULL)
+        g_signal_emit_by_name (item, "clicked");
+      pump (10);
+      gboolean ok = opened_uri != NULL && g_str_has_prefix (opened_uri, JR_REPORT_REPO "/issues/new?") &&
+                    strstr (opened_uri, cases[i].form) != NULL && strstr (opened_uri, "title=%5BNotes%5D%20") != NULL &&
+                    strstr (opened_uri, "version=" JR_VERSION) != NULL && strstr (opened_uri, "GTK%20") != NULL;
+      jr_case (&c, cases[i].item, ok, "Got %s", opened_uri);
+    }
+
+  opener_fails = TRUE;
+  g_clear_pointer (&opened_uri, g_free);
+  gboolean ok = jr_report_button_choose (button, JR_REPORT_BUG);
+  g_autofree char *pasted = NULL;
+  gdk_clipboard_read_text_async (gtk_widget_get_clipboard (button), NULL, on_clipboard_text, &pasted);
+  gint64 until = g_get_monotonic_time () + 2 * G_USEC_PER_SEC;
+  while (pasted == NULL && g_get_monotonic_time () < until)
+    g_main_context_iteration (NULL, FALSE);
+  jr_case (&c, "no browser: the address on the clipboard", !ok && g_strcmp0 (pasted, opened_uri) == 0,
+           "ok=%d clipboard %s", ok, pasted);
+  opener_fails = FALSE;
+  close_other_windows (GTK_WINDOW (win)); /* the dialog */
+  pump (20);
+  g_clear_pointer (&opened_uri, g_free);
+  jr_cases_done (&c);
+  gtk_window_destroy (GTK_WINDOW (win));
+  pump (20);
+  remove_tree (dir);
+}
+
 /* ---- memory: nothing keeps growing ---------------------------------------- */
 
 static gsize
@@ -2046,6 +2128,7 @@ main (int argc, char **argv)
   g_test_add_func ("/notes-ui/drive", test_drive);
   g_test_add_func ("/notes-ui/drive-sign-in", test_drive_sign_in);
   g_test_add_func ("/notes-ui/close-while-enhancing", test_close_while_enhancing);
+  g_test_add_func ("/notes-ui/report", test_report);
   g_test_add_func ("/notes-ui/no-growth", test_no_growth);
   return g_test_run ();
 }

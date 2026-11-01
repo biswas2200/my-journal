@@ -67,6 +67,7 @@ JOURNAL_DB=/tmp/journal-check.db ./build/journal
 | Signing in from the window: waiting for you on Google's page is shown in the ☁ Drive menu; clicking again starts over quietly; finishing signs in; closing Notes while it waits ends it quietly and the window is freed | `ui/notes-ui` (`/notes-ui/drive-sign-in`) |
 | Closing Notes during an Enhance that has not answered: the study time and the day's backup are still written as the window closes; the late answer breaks nothing | `ui/notes-ui` (`/notes-ui/close-while-enhancing`) |
 | Reporting a problem: the address of each GitHub form with the version, the system and the part filled in and escaped | `core/report` |
+| ⚑ Report in Notes: each menu item opens its form ("[Notes]", the version, GTK); with no browser the address is put on the clipboard and a dialog says so | `ui/notes-ui` (`/notes-ui/report`) |
 | Drive in the window: quiet until signed in; then states and amber marks; back up a topic (sent as Export .md writes it) and everything (with its Doc, folder and the Notes folder); nothing due runs nothing; not verified stays due and reuses its Doc; a shared Doc and an expired sign-in said plainly; closing backs up first, then closes; nothing changed closes at once; a slow Drive cut off at closing keeps what it finished and leaves the rest due | `ui/notes-ui` (`/notes-ui/drive`) |
 | Backup records: every change bumps a topic's version (triggers), a subject rename bumps all its topics, a backup records the version sent (an edit during it stays due), due topics by subject then name, records and folders go with their topic or subject and survive a restart | `core/notesdb` |
 | Sidebar folds: one subject open at a time (the one clicked, or the open topic's), only its topics listed, ▸ / ▾ in front of each subject | `ui/notes-ui` (`/notes-ui/sidebar-folds`) |
@@ -319,3 +320,11 @@ not counted the sleep. **Export .md** shows "Time studied".
    Allow, Notes is signed in and no "not finished" message comes later.*
 9. With Google's page open, close Notes. *It closes at once.*
 
+### 17. Reporting a problem
+
+1. On the start screen, **⚑ Report → Something is broken.** *Your
+   browser opens the project's "Bug report" form on GitHub with the
+   version and the system filled in.*
+2. In Notes, **⚑ Report → Something looks wrong.** *The "UI problem"
+   form opens, its title starting with "[Notes]". Screenshots can be
+   dragged into it.*

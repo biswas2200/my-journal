@@ -9,6 +9,7 @@
 #include "notebackup.h"
 #include "noteexport.h"
 #include "programs.h"
+#include "report_button.h"
 
 #define SAVE_DELAY_MS 1000
 #define RETRY_DELAY_MS 5000 /* after a failed save */
@@ -50,6 +51,7 @@ struct _JnWindow {
   gboolean      closing_backed; /* that backup is over: close for real */
   gboolean      day_backed;     /* the day's backup was made as it closed */
   guint         close_limit_ms; /* how long closing may wait for it */
+  GtkWidget    *report_button;  /* "⚑ Report": GitHub's forms */
   GtkWidget    *drive_button, *drive_line, *sign_in, *backup_topic, *backup_all, *sign_out, *backup_state;
 };
 
@@ -1205,6 +1207,9 @@ jn_window_init (JnWindow *win)
   gtk_header_bar_pack_start (GTK_HEADER_BAR (header), win->title);
   win->export_button = header_button ("Export .md", "Save the whole topic as Markdown (Ctrl+E)",
                                       G_CALLBACK (on_export), win);
+  win->report_button = jr_report_button_new ("Notes", JR_VERSION);
+  gtk_widget_add_css_class (win->report_button, "nav");
+  gtk_header_bar_pack_end (GTK_HEADER_BAR (header), win->report_button);
   gtk_header_bar_pack_end (GTK_HEADER_BAR (header), build_drive_menu (win));
   gtk_header_bar_pack_end (GTK_HEADER_BAR (header), win->export_button);
   win->enhance_button = header_button ("\xe2\x9c\xa6 Enhance", "Write an enhanced copy from your note and its sources",
@@ -1653,6 +1658,12 @@ const char *
 jn_window_backup_state (JnWindow *win)
 {
   return gtk_label_get_text (GTK_LABEL (win->backup_state));
+}
+
+GtkWidget *
+jn_window_report_button (JnWindow *win)
+{
+  return win->report_button;
 }
 
 const char *

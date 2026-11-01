@@ -12,6 +12,7 @@
 #include <glib-unix.h>
 #include <gtk/gtk.h>
 #include "programs.h"
+#include "report_button.h"
 
 #define APP_ID "io.github.biswas2200.Journal"
 
@@ -216,6 +217,8 @@ build_home (Launcher *l)
   gtk_window_set_default_size (l->home, 720, 460);
   GtkWidget *header = gtk_header_bar_new ();
   gtk_header_bar_set_title_widget (GTK_HEADER_BAR (header), gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0));
+  /* Reports for both programs start here: the Journal may not open links. */
+  gtk_header_bar_pack_end (GTK_HEADER_BAR (header), jr_report_button_new (NULL, JR_VERSION));
   gtk_window_set_titlebar (l->home, header);
 
   GtkWidget *col = gtk_box_new (GTK_ORIENTATION_VERTICAL, 22);

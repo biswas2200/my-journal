@@ -16,6 +16,7 @@ cc = meson.get_compiler('c')
 add_project_arguments(
   '-D_GNU_SOURCE',
   '-DG_LOG_DOMAIN="journal"',
+  '-DJR_VERSION="@0@"'.format(meson.project_version()), # --version, bug reports
   language : 'c',
 )
 if get_option('fuzz')
@@ -149,6 +150,14 @@ notes_client_dep = declare_dependency(
 
 # App
 gtk_dep = dependency('gtk4', version : '>= 4.12')
+# The "⚑ Report" button: the start screen's and Notes' header bars.
+shared_ui_lib = static_library('journal-shared-ui', 'src/shared/report_button.c',
+  dependencies : [shared_dep, gtk_dep],
+)
+shared_ui_dep = declare_dependency(
+  link_with : shared_ui_lib,
+  dependencies : [shared_dep, gtk_dep],
+)
 # The login keyring, which holds the secret a PIN needs (see keyring.h).
 secret_dep = dependency('libsecret-1', version : '>= 0.20')
 gnome = import('gnome')
@@ -216,14 +225,14 @@ notes_ui_lib = static_library('notes-ui',
   'src/notes/ui/notes_window.c',
   notes_resources[1],
   dependencies : [notes_core_dep, notes_client_dep, notes_drive_client_dep, gtk_dep, rsvg_dep, programs_dep,
-                  shared_dep],
+                  shared_ui_dep],
 )
 notes_ui_dep = declare_dependency(
   link_with : notes_ui_lib,
   sources : notes_resources,
   include_directories : include_directories('src/notes/ui'),
   dependencies : [notes_core_dep, notes_client_dep, notes_drive_client_dep, gtk_dep, rsvg_dep, programs_dep,
-                  shared_dep],
+                  shared_ui_dep],
 )
 notes_exe = executable('journal-notes', 'src/notes/main.c',
   dependencies : notes_ui_dep,
@@ -245,8 +254,8 @@ drive_exe = executable('journal-drive', 'src/notes/drive/helper.c',
   install_dir : get_option('libexecdir'),
 )
 launcher_exe = executable('journal', 'src/launcher/main.c',
-  dependencies : [gtk_dep, programs_dep],
-  c_args : ['-DJR_PROGRAM_DIR="@0@"'.format(program_dir), '-DJR_VERSION="@0@"'.format(meson.project_version())],
+  dependencies : [gtk_dep, programs_dep, shared_ui_dep],
+  c_args : ['-DJR_PROGRAM_DIR="@0@"'.format(program_dir)],
   install : true,
 )
 

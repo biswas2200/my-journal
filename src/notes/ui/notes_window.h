@@ -83,6 +83,8 @@ const char *jn_window_backup_state (JnWindow *win);
 const char *jn_window_drive_line   (JnWindow *win);
 /* Waiting for you to finish on Google's sign-in page. */
 gboolean  jn_window_is_signing_in  (JnWindow *win);
+/* The header's "⚑ Report" button (report_button.h), for tests. */
+GtkWidget *jn_window_report_button (JnWindow *win);
 
 /* Daily backups of the store in `dir` (notebackup.h): one now, and the
  * day's copy again when the window closes. */

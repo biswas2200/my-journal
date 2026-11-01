@@ -239,6 +239,17 @@ To remove Notes' access completely: **☁ Drive → Sign out** (it revokes
 the sign-in at Google), or at
 [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 
+## Reporting a problem
+
+**⚑ Report**, on the start screen and in Notes' header, has three
+choices: *Something is broken*, *Something looks wrong* and *An idea or
+improvement*. Each opens that form on the project's GitHub page in your
+browser, with the app's version and your system (distribution, kernel,
+GTK) filled in. Describe what happened and the steps there, and drag
+screenshots or a screen recording into the form. Nothing is sent from
+the app, and no note or journal text is included. Journal problems are
+reported from the start screen: the Journal itself may not open links.
+
 ## AI enhanced copy
 
 **✦ Enhance** (`Ctrl+Shift+E`) writes an enhanced copy of the open
@@ -565,8 +576,8 @@ How the parts fit, the rules the code keeps, how to test and release:
 ```
 src/launcher/ `journal`: the start screen; runs one program at a time
 src/shared/   the start screen's and Notes': report (the GitHub form's
-              address), openuri (opening an address through the
-              desktop's portal)
+              address), report_button (⚑ Report), openuri (opening an
+              address through the desktop's portal)
 src/diary/    `journal-diary`: the Journal's main(), in the network jail
 src/notes/    `journal-notes`: Notes (study notes, AI enhanced copy)
   core/       plain C, no UI, nothing of the Journal: noteline (the six
