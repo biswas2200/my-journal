@@ -1,5 +1,5 @@
 project('journal', 'c',
-  version : '0.1.0',
+  version : '0.1.5',
   license : 'MIT',
   license_files : 'LICENSE',
   meson_version : '>= 1.1',
