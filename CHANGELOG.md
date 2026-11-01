@@ -1,6 +1,16 @@
 # Changes
 
-## Unreleased
+## 0.1.2 (1 November 2026)
+
+A fix for the Notes sidebar.
+
+### Fixed
+
+- The sidebar now highlights what you clicked (a style rule hid it).
+
+## 0.1.1 (1 November 2026)
+
+Notes keeps your text through any failure.
 
 ### Notes: your text survives anything
 
@@ -13,10 +23,6 @@
   when it closes, each checked before it replaces anything.
 - A damaged notes file is never opened or backed up over a good copy;
   Notes names the newest backup to restore.
-
-### Fixed
-
-- The sidebar now highlights what you clicked (a style rule hid it).
 
 ## 0.1.0 (30 October 2026)
 
