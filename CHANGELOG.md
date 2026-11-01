@@ -1,6 +1,48 @@
 # Changes
 
-## Unreleased
+## 0.1.4 (1 November 2026)
+
+Notes stays quick with years of notes.
+
+### Faster with many notes
+
+- Measured with 10 000 topics and 100 000 sessions. The sidebar now
+  shows one subject's topics at a time (▸ / ▾), and the autosave no
+  longer rebuilds the list. Opening a topic went from 454 ms to 5 ms,
+  and typing no longer freezes for about 280 ms at each autosave.
+
+### Tests
+
+- A load test (`meson test --suite load`) with years of notes, timed
+  against fixed limits; CI runs it too.
+
+## 0.1.3 (1 November 2026)
+
+Crash, memory and sanity tests for Notes, and a backup fix they found.
+
+### Fixed
+
+- A backup cut off by a crash no longer leaves SQLite's side file
+  behind, where the next backup could have picked it up.
+
+### Tests
+
+- Notes crash test (SIGKILL while saving and backing up), a memory
+  no-growth test for the Notes window, and `tools/sanity.sh`: this tree
+  and the last release side by side, including old notes in the new
+  build and back. CI runs it on every push.
+
+## 0.1.2 (1 November 2026)
+
+A fix for the Notes sidebar.
+
+### Fixed
+
+- The sidebar now highlights what you clicked (a style rule hid it).
+
+## 0.1.1 (1 November 2026)
+
+Notes keeps your text through any failure.
 
 ### Notes: your text survives anything
 
@@ -13,28 +55,6 @@
   when it closes, each checked before it replaces anything.
 - A damaged notes file is never opened or backed up over a good copy;
   Notes names the newest backup to restore.
-
-### Fixed
-
-- The sidebar now highlights what you clicked (a style rule hid it).
-- A backup cut off by a crash no longer leaves SQLite's side file
-  behind, where the next backup could have picked it up.
-
-### Faster with many notes
-
-- Measured with 10 000 topics and 100 000 sessions. The sidebar now
-  shows one subject's topics at a time (▸ / ▾), and the autosave no
-  longer rebuilds the list. Opening a topic went from 454 ms to 5 ms,
-  and typing no longer freezes for about 280 ms at each autosave.
-
-### Tests
-
-- Notes crash test (SIGKILL while saving and backing up), a memory
-  no-growth test for the Notes window, and `tools/sanity.sh`: this tree
-  and the last release side by side, including old notes in the new
-  build and back. CI runs it on every push.
-- A load test (`meson test --suite load`) with years of notes, timed
-  against fixed limits; CI runs it too.
 
 ## 0.1.0 (30 October 2026)
 
