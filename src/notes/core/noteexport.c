@@ -47,9 +47,10 @@ html_start (const char *p)
     return FALSE;
   if (strchr (p, '>') == NULL)
     return FALSE;
-  gboolean web = g_str_has_prefix (p + 1, "http://") || g_str_has_prefix (p + 1, "https://");
+  gboolean http = g_str_has_prefix (p + 1, "http://");
+  gboolean https = g_str_has_prefix (p + 1, "https://");
   gsize len = strcspn (p, " >");
-  return !(web && p[len] == '>');
+  return !((http || https) && p[len] == '>');
 }
 
 /* Is `p` (at a "&") a character reference ("&amp;", "&#169;") a reader
@@ -93,7 +94,9 @@ fence (const char *line)
 {
   while (*line == ' ')
     line++;
-  return g_str_has_prefix (line, "```") || g_str_has_prefix (line, "~~~");
+  gboolean backticks = g_str_has_prefix (line, "```");
+  gboolean tildes = g_str_has_prefix (line, "~~~");
+  return backticks || tildes;
 }
 
 static gboolean
